@@ -1,0 +1,81 @@
+syntax = "proto3";
+
+package collab.sync.v1;
+
+option go_package = "collab-engine/gen/collab/sync/v1;syncv1";
+
+// SyncService is the only writer of document state. Gateways call it for
+// every edit and to catch clients up after a reconnect.
+service SyncService {
+  // ApplyOperations stores operations durably and assigns each a per-document
+  // sequence number. Retrying an op_id that is already stored returns its
+  // original ack instead of applying it twice.
+  rpc ApplyOperations(ApplyOperationsRequest) returns (ApplyOperationsResponse);
+
+  // GetOperationsSince streams every operation of a document after a
+  // sequence number, in order.
+  rpc GetOperationsSince(GetOperationsSinceRequest) returns (stream Operation);
+
+  // GetSnapshot returns the latest snapshot of a document for initial load.
+  rpc GetSnapshot(GetSnapshotRequest) returns (GetSnapshotResponse);
+}
+
+// ElementId identifies one character for its whole life. Ordered by counter,
+// then replica.
+message ElementId {
+  int64 counter = 1;
+  string replica = 2;
+}
+
+enum OpType {
+  OP_TYPE_UNSPECIFIED = 0;
+  OP_TYPE_INSERT = 1;
+  OP_TYPE_DELETE = 2;
+}
+
+message Operation {
+  string doc_id = 1;
+  // Globally unique; used for idempotency everywhere.
+  string op_id = 2;
+  OpType type = 3;
+  // The element inserted, or the element deleted.
+  ElementId id = 4;
+  // Insert only: the element this one follows. Unset means document start.
+  ElementId after = 5;
+  // Insert only: the character.
+  string value = 6;
+  // Assigned by the sync service; zero until stored.
+  int64 seq = 7;
+}
+
+message ApplyOperationsRequest {
+  string doc_id = 1;
+  string client_id = 2;
+  repeated Operation operations = 3;
+}
+
+message Ack {
+  string op_id = 1;
+  int64 seq = 2;
+}
+
+message ApplyOperationsResponse {
+  repeated Ack acks = 1;
+}
+
+message GetOperationsSinceRequest {
+  string doc_id = 1;
+  int64 after_seq = 2;
+}
+
+message GetSnapshotRequest {
+  string doc_id = 1;
+}
+
+message GetSnapshotResponse {
+  string doc_id = 1;
+  // The last sequence number included in state.
+  int64 seq = 2;
+  // Serialized CRDT state.
+  bytes state = 3;
+}

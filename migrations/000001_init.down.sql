@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS outbox;
+DROP TABLE IF EXISTS snapshots;
+DROP TABLE IF EXISTS operations;
+DROP TABLE IF EXISTS documents;
