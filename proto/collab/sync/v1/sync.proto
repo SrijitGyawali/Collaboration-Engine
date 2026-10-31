@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package collab.sync.v1;
 
-option go_package = "collab-engine/gen/collab/sync/v1;syncv1";
+option go_package = "github.com/SrijitGyawali/Collaboration-Engine/gen/collab/sync/v1;syncv1";
 
 // SyncService is the only writer of document state. Gateways call it for
 // every edit and to catch clients up after a reconnect.

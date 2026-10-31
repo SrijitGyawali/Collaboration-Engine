@@ -1,5 +1,7 @@
 # Collab Engine
 
+[![CI](https://github.com/SrijitGyawali/Collaboration-Engine/actions/workflows/ci.yml/badge.svg)](https://github.com/SrijitGyawali/Collaboration-Engine/actions/workflows/ci.yml)
+
 A distributed real-time collaborative text editor written in Go. Several people edit the same document at once, including while offline, and every copy converges to the same text.
 
 The core is a custom sequence CRDT. Around it, Go services communicate over gRPC, PostgreSQL is the source of truth, Redis fans live edits out across gateway replicas, and Kafka feeds background workers through a transactional outbox.
@@ -94,8 +96,8 @@ web/              Next.js frontend
 **Prerequisites:** Go 1.26+, Docker, Make. Node.js 24+ for the frontend, and [buf](https://buf.build/docs/installation) to regenerate gRPC code.
 
 ```bash
-git clone <this repo>
-cd collab-engine
+git clone https://github.com/SrijitGyawali/Collaboration-Engine.git
+cd Collaboration-Engine
 cp .env.example .env
 make up      # Postgres, Redis, Redpanda + migrations
 make test

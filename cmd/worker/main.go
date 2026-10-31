@@ -8,7 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 
-	"collab-engine/internal/platform"
+	"github.com/SrijitGyawali/Collaboration-Engine/internal/platform"
 )
 
 func main() {
