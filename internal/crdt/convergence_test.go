@@ -127,3 +127,45 @@ func TestDeliveryOrderDoesNotMatter(t *testing.T) {
 
 	assertConverged(t, docs...)
 }
+
+// TestDeleteWhileOtherUserInsertsAfterIt is why deletes leave tombstones:
+// alice deletes 'b' while bob, concurrently, types after it.
+func TestDeleteWhileOtherUserInsertsAfterIt(t *testing.T) {
+	alice := NewDocument("alice")
+	bob := NewDocument("bob")
+	base := typeOps(t, alice, Root, "abc")
+	applyAll(t, bob, base)
+
+	del, err := alice.Delete(base[1].ID) // alice deletes 'b'
+	if err != nil {
+		t.Fatal(err)
+	}
+	ins := typeOps(t, bob, base[1].ID, "XY") // bob types "XY" after 'b'
+
+	applyAll(t, alice, ins)
+	applyAll(t, bob, []Op{del})
+
+	assertConverged(t, alice, bob)
+	if got := alice.Text(); got != "aXYc" {
+		t.Errorf("Text() = %q, want %q", got, "aXYc")
+	}
+}
+
+// TestConcurrentDeletesOfSameCharacter: both users delete the same character
+// and receive each other's delete.
+func TestConcurrentDeletesOfSameCharacter(t *testing.T) {
+	alice := NewDocument("alice")
+	bob := NewDocument("bob")
+	base := typeOps(t, alice, Root, "abc")
+	applyAll(t, bob, base)
+
+	d1, _ := alice.Delete(base[1].ID)
+	d2, _ := bob.Delete(base[1].ID)
+	applyAll(t, alice, []Op{d2})
+	applyAll(t, bob, []Op{d1})
+
+	assertConverged(t, alice, bob)
+	if got := alice.Text(); got != "ac" {
+		t.Errorf("Text() = %q, want %q", got, "ac")
+	}
+}
