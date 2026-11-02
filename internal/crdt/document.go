@@ -11,6 +11,9 @@ var (
 	// ErrUnknownParent is returned when an insert names a parent character
 	// this replica has not seen yet.
 	ErrUnknownParent = errors.New("crdt: unknown parent")
+	// ErrUnknownTarget is returned when a delete names a character this
+	// replica has not seen yet.
+	ErrUnknownTarget = errors.New("crdt: unknown target")
 	// ErrDuplicateID is returned when an insert reuses the ID of a character
 	// that already exists.
 	ErrDuplicateID = errors.New("crdt: duplicate id")
@@ -20,6 +23,9 @@ var (
 type element struct {
 	id    ID
 	value rune
+	// deleted marks a tombstone: the character is hidden from the text but
+	// stays in the tree, because other replicas may still insert after it.
+	deleted bool
 }
 
 // Document is one replica's copy of a text document.
@@ -39,7 +45,8 @@ type element struct {
 // A Document is not safe for concurrent use.
 type Document struct {
 	clock *Clock
-	// elements holds every character ever inserted, by ID.
+	// elements holds every character ever inserted, by ID, including
+	// deleted ones.
 	elements map[ID]*element
 	// children lists, for each character (and Root), the characters inserted
 	// directly after it, sorted by ID from highest to lowest.
@@ -72,18 +79,30 @@ func (d *Document) InsertAfter(after ID, value rune) (Op, error) {
 	return op, nil
 }
 
+// Delete removes the character target and returns the operation to send to
+// other replicas.
+func (d *Document) Delete(target ID) (Op, error) {
+	op := Op{Kind: OpDelete, ID: d.clock.Next(), Target: target}
+	if err := d.Apply(op); err != nil {
+		return Op{}, err
+	}
+	return op, nil
+}
+
 // Apply applies an operation, local or from another replica.
 func (d *Document) Apply(op Op) error {
 	if err := op.Validate(); err != nil {
 		return err
 	}
+	var err error
 	switch op.Kind {
 	case OpInsert:
-		if err := d.applyInsert(op); err != nil {
-			return err
-		}
-	default:
-		return fmt.Errorf("%w: %v is not supported yet", ErrInvalidOp, op.Kind)
+		err = d.applyInsert(op)
+	case OpDelete:
+		err = d.applyDelete(op)
+	}
+	if err != nil {
+		return err
 	}
 	// Seeing this op means our next local op must sort after it.
 	d.clock.Observe(op.ID)
@@ -101,6 +120,22 @@ func (d *Document) applyInsert(op Op) error {
 	}
 	d.elements[op.ID] = &element{id: op.ID, value: op.Value}
 	d.children[op.After] = insertSorted(d.children[op.After], op.ID)
+	return nil
+}
+
+// applyDelete turns the target into a tombstone instead of removing it.
+//
+// Removing it would break concurrent edits: if Bob inserts after a character
+// at the same moment Alice deletes it, Bob's insert must still find its
+// parent when it arrives. Keeping the tombstone also makes deletes
+// commutative and safe to repeat: deleting twice, or in any order relative
+// to other deletes, gives the same result.
+func (d *Document) applyDelete(op Op) error {
+	e, ok := d.elements[op.Target]
+	if !ok {
+		return fmt.Errorf("%w: %v (deleting with %v)", ErrUnknownTarget, op.Target, op.ID)
+	}
+	e.deleted = true
 	return nil
 }
 
@@ -125,17 +160,21 @@ func insertSorted(siblings []ID, id ID) []ID {
 	return slices.Insert(siblings, i, id)
 }
 
-// Text returns the current text of the document.
+// Text returns the current text of the document, without deleted characters.
 func (d *Document) Text() string {
 	var b strings.Builder
 	d.writeSubtree(&b, Root)
 	return b.String()
 }
 
-// writeSubtree writes every character inserted after id, depth-first.
+// writeSubtree writes every visible character inserted after id, depth-first.
+// Tombstones are skipped, but their children are not: text typed after a
+// deleted character is still part of the document.
 func (d *Document) writeSubtree(b *strings.Builder, id ID) {
 	for _, child := range d.children[id] {
-		b.WriteRune(d.elements[child].value)
+		if e := d.elements[child]; !e.deleted {
+			b.WriteRune(e.value)
+		}
 		d.writeSubtree(b, child)
 	}
 }
