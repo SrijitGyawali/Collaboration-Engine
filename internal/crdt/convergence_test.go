@@ -2,27 +2,6 @@ package crdt
 
 import "testing"
 
-// applyAll applies ops to doc in order, failing the test on any error.
-func applyAll(t *testing.T, doc *Document, ops []Op) {
-	t.Helper()
-	for _, op := range ops {
-		if err := doc.Apply(op); err != nil {
-			t.Fatalf("%s: Apply(%v): %v", doc.Replica(), op.ID, err)
-		}
-	}
-}
-
-// assertConverged fails the test unless every doc has the same text.
-func assertConverged(t *testing.T, docs ...*Document) {
-	t.Helper()
-	want := docs[0].Text()
-	for _, d := range docs[1:] {
-		if got := d.Text(); got != want {
-			t.Errorf("%s has %q, %s has %q", d.Replica(), got, docs[0].Replica(), want)
-		}
-	}
-}
-
 // TestConcurrentInsertsAtSamePosition is the classic conflict: both users see
 // "Hi" and insert a character right after "H" at the same moment.
 func TestConcurrentInsertsAtSamePosition(t *testing.T) {

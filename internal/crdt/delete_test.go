@@ -5,21 +5,6 @@ import (
 	"testing"
 )
 
-// typeOps types s after the given ID and returns the ops, in typing order.
-func typeOps(t *testing.T, doc *Document, after ID, s string) []Op {
-	t.Helper()
-	var ops []Op
-	for _, r := range s {
-		op, err := doc.InsertAfter(after, r)
-		if err != nil {
-			t.Fatalf("InsertAfter(%v, %q): %v", after, r, err)
-		}
-		ops = append(ops, op)
-		after = op.ID
-	}
-	return ops
-}
-
 func TestDeleteHidesCharacter(t *testing.T) {
 	doc := NewDocument("alice")
 	ops := typeOps(t, doc, Root, "cart")

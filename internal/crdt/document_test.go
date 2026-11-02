@@ -5,21 +5,6 @@ import (
 	"testing"
 )
 
-// typeText inserts s at the end of what doc's replica typed last, one
-// character at a time, the way a user typing would. It starts after the
-// given ID and returns the ID of the last character typed.
-func typeText(t *testing.T, doc *Document, after ID, s string) ID {
-	t.Helper()
-	for _, r := range s {
-		op, err := doc.InsertAfter(after, r)
-		if err != nil {
-			t.Fatalf("InsertAfter(%v, %q): %v", after, r, err)
-		}
-		after = op.ID
-	}
-	return after
-}
-
 func TestEmptyDocument(t *testing.T) {
 	if got := NewDocument("alice").Text(); got != "" {
 		t.Errorf("Text() = %q, want empty", got)
@@ -28,7 +13,7 @@ func TestEmptyDocument(t *testing.T) {
 
 func TestTypingInOrder(t *testing.T) {
 	doc := NewDocument("alice")
-	typeText(t, doc, Root, "hello")
+	typeOps(t, doc, Root, "hello")
 
 	if got := doc.Text(); got != "hello" {
 		t.Errorf("Text() = %q, want %q", got, "hello")
@@ -41,7 +26,7 @@ func TestInsertInTheMiddle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	typeText(t, doc, h.ID, "i")
+	typeOps(t, doc, h.ID, "i")
 
 	// Insert '!' between 'h' and 'i'.
 	if _, err := doc.InsertAfter(h.ID, '!'); err != nil {
@@ -55,8 +40,8 @@ func TestInsertInTheMiddle(t *testing.T) {
 
 func TestInsertAtStart(t *testing.T) {
 	doc := NewDocument("alice")
-	typeText(t, doc, Root, "world")
-	typeText(t, doc, Root, "hello ")
+	typeOps(t, doc, Root, "world")
+	typeOps(t, doc, Root, "hello ")
 
 	if got := doc.Text(); got != "hello world" {
 		t.Errorf("Text() = %q, want %q", got, "hello world")
@@ -65,7 +50,7 @@ func TestInsertAtStart(t *testing.T) {
 
 func TestUnicode(t *testing.T) {
 	doc := NewDocument("alice")
-	typeText(t, doc, Root, "नमस्ते 👋")
+	typeOps(t, doc, Root, "नमस्ते 👋")
 
 	if got := doc.Text(); got != "नमस्ते 👋" {
 		t.Errorf("Text() = %q, want %q", got, "नमस्ते 👋")
@@ -77,21 +62,8 @@ func TestApplyRemoteOps(t *testing.T) {
 	bob := NewDocument("bob")
 
 	// Alice types; bob receives her ops in order.
-	var ops []Op
-	after := Root
-	for _, r := range "hi" {
-		op, err := alice.InsertAfter(after, r)
-		if err != nil {
-			t.Fatal(err)
-		}
-		ops = append(ops, op)
-		after = op.ID
-	}
-	for _, op := range ops {
-		if err := bob.Apply(op); err != nil {
-			t.Fatalf("bob.Apply(%v): %v", op.ID, err)
-		}
-	}
+	ops := typeOps(t, alice, Root, "hi")
+	applyAll(t, bob, ops)
 
 	if got := bob.Text(); got != "hi" {
 		t.Errorf("bob.Text() = %q, want %q", got, "hi")
@@ -99,7 +71,7 @@ func TestApplyRemoteOps(t *testing.T) {
 
 	// Bob's next character must get a higher counter than anything he saw,
 	// so it sorts after Alice's characters.
-	op, err := bob.InsertAfter(after, '!')
+	op, err := bob.InsertAfter(ops[len(ops)-1].ID, '!')
 	if err != nil {
 		t.Fatal(err)
 	}
