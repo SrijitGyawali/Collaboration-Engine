@@ -161,20 +161,34 @@ func insertSorted(siblings []ID, id ID) []ID {
 }
 
 // Text returns the current text of the document, without deleted characters.
+//
+// It walks the tree depth-first with an explicit stack rather than recursion.
+// Ordinary typing builds a chain (each character is the child of the one
+// before), so a 100,000-character document would otherwise recurse 100,000
+// levels deep.
 func (d *Document) Text() string {
 	var b strings.Builder
-	d.writeSubtree(&b, Root)
+	stack := d.pushChildren(nil, Root)
+	for len(stack) > 0 {
+		id := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+
+		// Tombstones are skipped, but their children are not: text typed
+		// after a deleted character is still part of the document.
+		if e := d.elements[id]; !e.deleted {
+			b.WriteRune(e.value)
+		}
+		stack = d.pushChildren(stack, id)
+	}
 	return b.String()
 }
 
-// writeSubtree writes every visible character inserted after id, depth-first.
-// Tombstones are skipped, but their children are not: text typed after a
-// deleted character is still part of the document.
-func (d *Document) writeSubtree(b *strings.Builder, id ID) {
-	for _, child := range d.children[id] {
-		if e := d.elements[child]; !e.deleted {
-			b.WriteRune(e.value)
-		}
-		d.writeSubtree(b, child)
+// pushChildren pushes the children of id onto stack in reverse, so the
+// highest-ID child is popped, and therefore written, first.
+func (d *Document) pushChildren(stack []ID, id ID) []ID {
+	kids := d.children[id]
+	for i := len(kids) - 1; i >= 0; i-- {
+		stack = append(stack, kids[i])
 	}
+	return stack
 }
