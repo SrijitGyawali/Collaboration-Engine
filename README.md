@@ -89,6 +89,7 @@ proto/            gRPC contracts (buf)
 migrations/       PostgreSQL schema (golang-migrate)
 deploy/           Docker Compose for local infrastructure
 web/              Next.js frontend
+track/            Daily progress log
 ```
 
 ## Getting started
@@ -134,9 +135,9 @@ Run `make help` to list every target:
 | Week | Goal | Status |
 | --- | --- | --- |
 | 0 | Repository, tooling, CI | Done |
-| 1 | CRDT core with property tests; WebAssembly build | Not started |
+| 1 | CRDT core with property tests; WebAssembly build | In progress: inserts, deletes and concurrent ordering done |
 | 2 | WebSocket + PostgreSQL; split into services over gRPC | Not started |
 | 3 | Redis fan-out, presence, offline editing, failure tests | Not started |
 | 4 | Outbox + Kafka workers, metrics, load test, demo | Not started |
 
-Measured latency and throughput will be published here once the load tests run.
+Day-by-day notes are in [track/](track/README.md). Measured latency and throughput will be published here once the load tests run.
