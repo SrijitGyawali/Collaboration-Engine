@@ -3,6 +3,7 @@ package crdt
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -41,7 +42,7 @@ type Document struct {
 	// elements holds every character ever inserted, by ID.
 	elements map[ID]*element
 	// children lists, for each character (and Root), the characters inserted
-	// directly after it.
+	// directly after it, sorted by ID from highest to lowest.
 	children map[ID][]ID
 }
 
@@ -99,12 +100,29 @@ func (d *Document) applyInsert(op Op) error {
 		}
 	}
 	d.elements[op.ID] = &element{id: op.ID, value: op.Value}
-	// The new character goes right after its parent, so it comes before any
-	// older siblings: put it first. This is right for a single replica, but
-	// two replicas that receive concurrent inserts in different orders can
-	// still disagree; ordering siblings by ID fixes that next.
-	d.children[op.After] = append([]ID{op.ID}, d.children[op.After]...)
+	d.children[op.After] = insertSorted(d.children[op.After], op.ID)
 	return nil
+}
+
+// insertSorted adds id to siblings, a list of characters inserted after the
+// same parent, keeping it sorted by ID from highest to lowest.
+//
+// This one rule makes concurrent inserts converge:
+//
+//   - A local insert always has the highest ID its replica has seen (Lamport
+//     clock), so it lands first, right after its parent, where the user
+//     typed it.
+//   - Two inserts after the same parent made concurrently on different
+//     replicas are ordered by ID on every replica, whatever order they
+//     arrived in, so all replicas show the same text.
+func insertSorted(siblings []ID, id ID) []ID {
+	// Find the first sibling with a lower ID than id. Comparing as
+	// id.Compare(s) (rather than s.Compare(id)) is what makes the order
+	// descending.
+	i, _ := slices.BinarySearchFunc(siblings, id, func(s, target ID) int {
+		return target.Compare(s)
+	})
+	return slices.Insert(siblings, i, id)
 }
 
 // Text returns the current text of the document.
