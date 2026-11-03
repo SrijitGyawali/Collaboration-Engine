@@ -14,9 +14,10 @@ var (
 	// ErrUnknownTarget is returned when a delete names a character this
 	// replica has not seen yet.
 	ErrUnknownTarget = errors.New("crdt: unknown target")
-	// ErrDuplicateID is returned when an insert reuses the ID of a character
-	// that already exists.
-	ErrDuplicateID = errors.New("crdt: duplicate id")
+	// ErrConflictingOp is returned when an op reuses the ID of an op already
+	// applied but says something different (another character, parent or
+	// target). Honest replicas never do this, so it means corrupted input.
+	ErrConflictingOp = errors.New("crdt: conflicting operation")
 )
 
 // element is one character in the document.
@@ -55,6 +56,10 @@ type Document struct {
 	// children lists, for each character (and Root), the characters inserted
 	// directly after it, sorted by ID from highest to lowest.
 	children map[ID][]ID
+	// deletes records every applied delete: op ID -> target. Together with
+	// elements (which records every applied insert) it answers "have I
+	// already applied this op?".
+	deletes map[ID]ID
 }
 
 // NewDocument returns an empty document owned by the named replica. Each
@@ -64,6 +69,7 @@ func NewDocument(replica string) *Document {
 		clock:    NewClock(replica),
 		elements: make(map[ID]*element),
 		children: make(map[ID][]ID),
+		deletes:  make(map[ID]ID),
 	}
 }
 
@@ -99,7 +105,13 @@ func (d *Document) Apply(op Op) (Status, error) {
 	if err := op.Validate(); err != nil {
 		return 0, err
 	}
-	var err error
+	seen, err := d.alreadyApplied(op)
+	if err != nil {
+		return 0, err
+	}
+	if seen {
+		return Duplicate, nil
+	}
 	switch op.Kind {
 	case OpInsert:
 		err = d.applyInsert(op)
@@ -114,10 +126,30 @@ func (d *Document) Apply(op Op) (Status, error) {
 	return Applied, nil
 }
 
-func (d *Document) applyInsert(op Op) error {
-	if _, exists := d.elements[op.ID]; exists {
-		return fmt.Errorf("%w: %v", ErrDuplicateID, op.ID)
+// alreadyApplied reports whether op was applied before. Networks retry, so
+// the same op routinely arrives twice (a client resends because it never saw
+// the ack, Redis and Kafka both deliver at least once). A repeat must be a
+// harmless no-op, not an error.
+//
+// It returns ErrConflictingOp if the ID is known but the op differs from the
+// one applied under that ID.
+func (d *Document) alreadyApplied(op Op) (bool, error) {
+	if e, ok := d.elements[op.ID]; ok {
+		if op.Kind == OpInsert && op.After == e.after && op.Value == e.value {
+			return true, nil
+		}
+		return false, fmt.Errorf("%w: %v was an insert of %q after %v", ErrConflictingOp, op.ID, e.value, e.after)
 	}
+	if target, ok := d.deletes[op.ID]; ok {
+		if op.Kind == OpDelete && op.Target == target {
+			return true, nil
+		}
+		return false, fmt.Errorf("%w: %v was a delete of %v", ErrConflictingOp, op.ID, target)
+	}
+	return false, nil
+}
+
+func (d *Document) applyInsert(op Op) error {
 	if !op.After.IsRoot() {
 		if _, ok := d.elements[op.After]; !ok {
 			return fmt.Errorf("%w: %v (inserting %v)", ErrUnknownParent, op.After, op.ID)
@@ -141,6 +173,7 @@ func (d *Document) applyDelete(op Op) error {
 		return fmt.Errorf("%w: %v (deleting with %v)", ErrUnknownTarget, op.Target, op.ID)
 	}
 	e.deleted = true
+	d.deletes[op.ID] = op.Target
 	return nil
 }
 

@@ -87,8 +87,7 @@ func TestApplyRemoteOps(t *testing.T) {
 
 func TestApplyErrors(t *testing.T) {
 	doc := NewDocument("alice")
-	first, err := doc.InsertAfter(Root, 'a')
-	if err != nil {
+	if _, err := doc.InsertAfter(Root, 'a'); err != nil {
 		t.Fatal(err)
 	}
 
@@ -98,7 +97,6 @@ func TestApplyErrors(t *testing.T) {
 		want error
 	}{
 		{"unknown parent", Op{Kind: OpInsert, ID: ID{9, "bob"}, After: ID{8, "bob"}, Value: 'x'}, ErrUnknownParent},
-		{"duplicate id", first, ErrDuplicateID},
 		{"invalid op", Op{Kind: OpInsert, Value: 'x'}, ErrInvalidOp},
 	}
 	for _, tt := range tests {
