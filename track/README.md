@@ -7,6 +7,7 @@ One file per working day: what was planned, what got built, what was learned, an
 | 0 | Oct 31 | Repository setup and tooling | [2026-10-31](2026-10-31.md) |
 | 1 | Nov 1 | CRDT IDs, Lamport clock, operations, inserts | [2026-11-01](2026-11-01.md) |
 | 2 | Nov 2 | Concurrent insert ordering, tombstone deletes | [2026-11-02](2026-11-02.md) |
+| 3 | Nov 3 | Idempotent re-delivery, pending buffer for early ops | [2026-11-03](2026-11-03.md) |
 
 ## Weekly goals
 
