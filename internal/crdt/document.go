@@ -18,6 +18,9 @@ var (
 	// applied but says something different (another character, parent or
 	// target). Honest replicas never do this, so it means corrupted input.
 	ErrConflictingOp = errors.New("crdt: conflicting operation")
+	// ErrTooManyPending is returned when an op would have to wait for its
+	// dependency but the pending buffer is full (see WithMaxPending).
+	ErrTooManyPending = errors.New("crdt: too many pending operations")
 )
 
 // element is one character in the document.
@@ -66,19 +69,26 @@ type Document struct {
 	// waiting indexes the same ops by their own ID, so a repeat of an op
 	// that is still waiting is recognised instead of buffered twice.
 	waiting map[ID]Op
+	// maxPending caps len(waiting).
+	maxPending int
 }
 
 // NewDocument returns an empty document owned by the named replica. Each
 // replica (browser tab, server process) must use a unique name.
-func NewDocument(replica string) *Document {
-	return &Document{
-		clock:    NewClock(replica),
-		elements: make(map[ID]*element),
-		children: make(map[ID][]ID),
-		deletes:  make(map[ID]ID),
-		pending:  make(map[ID][]Op),
-		waiting:  make(map[ID]Op),
+func NewDocument(replica string, opts ...Option) *Document {
+	d := &Document{
+		clock:      NewClock(replica),
+		elements:   make(map[ID]*element),
+		children:   make(map[ID][]ID),
+		deletes:    make(map[ID]ID),
+		pending:    make(map[ID][]Op),
+		waiting:    make(map[ID]Op),
+		maxPending: DefaultMaxPending,
 	}
+	for _, opt := range opts {
+		opt(d)
+	}
+	return d
 }
 
 // Replica returns the name of the replica that owns this copy.
@@ -144,10 +154,16 @@ func (d *Document) Apply(op Op) (Status, error) {
 		return Pending, nil
 	}
 
+	dep := op.Dependency()
+	mustWait := !d.has(dep)
+	if mustWait && len(d.waiting) >= d.maxPending {
+		return 0, fmt.Errorf("%w: %d waiting, rejecting %v", ErrTooManyPending, len(d.waiting), op.ID)
+	}
+
 	// Seeing this op means our next local op must sort after it.
 	d.clock.Observe(op.ID)
 
-	if dep := op.Dependency(); !d.has(dep) {
+	if mustWait {
 		d.pending[dep] = append(d.pending[dep], op)
 		d.waiting[op.ID] = op
 		return Pending, nil

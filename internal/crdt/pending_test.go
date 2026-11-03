@@ -126,6 +126,27 @@ func TestConflictWhileWaitingIsRejected(t *testing.T) {
 	}
 }
 
+func TestPendingBufferIsCapped(t *testing.T) {
+	alice := NewDocument("alice")
+	bob := NewDocument("bob", WithMaxPending(2))
+	ops := typeOps(t, alice, Root, "abcd")
+
+	// b and c wait for a; d would be the third waiting op.
+	mustApply(t, bob, ops[1], Pending)
+	mustApply(t, bob, ops[2], Pending)
+	if _, err := bob.Apply(ops[3]); !errors.Is(err, ErrTooManyPending) {
+		t.Fatalf("Apply(d) = %v, want ErrTooManyPending", err)
+	}
+
+	// Ops that can be applied right away are not affected by the cap, and
+	// applying 'a' frees the buffer so 'd' can be sent again.
+	mustApply(t, bob, ops[0], Applied)
+	mustApply(t, bob, ops[3], Applied)
+	if got := bob.Text(); got != "abcd" {
+		t.Errorf("Text() = %q, want %q", got, "abcd")
+	}
+}
+
 // Local edits must name characters the replica has; they never wait.
 func TestLocalEditsOfUnknownCharactersFail(t *testing.T) {
 	doc := NewDocument("alice")
