@@ -66,6 +66,31 @@ func deliver(t *testing.T, ops []Op) *Document {
 	return doc
 }
 
+// TestSessionDeliveredWithRepeats models an at-least-once network: every op
+// arrives one to three times, in a random order.
+func TestSessionDeliveredWithRepeats(t *testing.T) {
+	for seed := range uint64(20) {
+		ops, want := session(t, seed)
+		rng := rand.New(rand.NewPCG(seed, 2))
+		var noisy []Op
+		for _, op := range ops {
+			for range 1 + rng.IntN(3) {
+				noisy = append(noisy, op)
+			}
+		}
+		rng.Shuffle(len(noisy), func(i, j int) { noisy[i], noisy[j] = noisy[j], noisy[i] })
+
+		doc := deliver(t, noisy)
+
+		if got := doc.Text(); got != want {
+			t.Errorf("seed %d: Text() = %q, want %q", seed, got, want)
+		}
+		if got := doc.PendingCount(); got != 0 {
+			t.Errorf("seed %d: PendingCount() = %d, want 0", seed, got)
+		}
+	}
+}
+
 func TestSessionDeliveredInReverse(t *testing.T) {
 	ops, want := session(t, 1)
 	reversed := slices.Clone(ops)
