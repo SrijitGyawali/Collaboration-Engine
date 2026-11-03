@@ -6,7 +6,7 @@ COMPOSE  := docker compose -f deploy/docker-compose.yml
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build wasm test test-race lint fmt proto up migrate down reset logs clean
+.PHONY: help build wasm test test-race cover bench lint fmt proto up migrate down reset logs clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-10s %s\n", $$1, $$2}'
@@ -22,6 +22,13 @@ test: ## Run all Go tests
 
 test-race: ## Run all Go tests with the race detector (needs cgo)
 	$(GO) test -race -count=1 ./...
+
+cover: ## Run tests with coverage; writes coverage.out and prints the total
+	$(GO) test -count=1 -coverprofile=coverage.out ./...
+	$(GO) tool cover -func=coverage.out | tail -1
+
+bench: ## Run benchmarks (no tests)
+	$(GO) test -run '^$$' -bench . -benchmem ./...
 
 lint: ## Run golangci-lint
 	golangci-lint run ./...
