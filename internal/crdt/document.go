@@ -73,7 +73,7 @@ func (d *Document) Replica() string {
 // replicas.
 func (d *Document) InsertAfter(after ID, value rune) (Op, error) {
 	op := Op{Kind: OpInsert, ID: d.clock.Next(), After: after, Value: value}
-	if err := d.Apply(op); err != nil {
+	if _, err := d.Apply(op); err != nil {
 		return Op{}, err
 	}
 	return op, nil
@@ -83,16 +83,17 @@ func (d *Document) InsertAfter(after ID, value rune) (Op, error) {
 // other replicas.
 func (d *Document) Delete(target ID) (Op, error) {
 	op := Op{Kind: OpDelete, ID: d.clock.Next(), Target: target}
-	if err := d.Apply(op); err != nil {
+	if _, err := d.Apply(op); err != nil {
 		return Op{}, err
 	}
 	return op, nil
 }
 
-// Apply applies an operation, local or from another replica.
-func (d *Document) Apply(op Op) error {
+// Apply applies an operation, local or from another replica, and reports
+// what happened to it. On error the document is unchanged.
+func (d *Document) Apply(op Op) (Status, error) {
 	if err := op.Validate(); err != nil {
-		return err
+		return 0, err
 	}
 	var err error
 	switch op.Kind {
@@ -102,11 +103,11 @@ func (d *Document) Apply(op Op) error {
 		err = d.applyDelete(op)
 	}
 	if err != nil {
-		return err
+		return 0, err
 	}
 	// Seeing this op means our next local op must sort after it.
 	d.clock.Observe(op.ID)
-	return nil
+	return Applied, nil
 }
 
 func (d *Document) applyInsert(op Op) error {

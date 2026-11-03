@@ -24,7 +24,7 @@ func typeOps(t *testing.T, doc *Document, after ID, s string) []Op {
 func applyAll(t *testing.T, doc *Document, ops []Op) {
 	t.Helper()
 	for _, op := range ops {
-		if err := doc.Apply(op); err != nil {
+		if _, err := doc.Apply(op); err != nil {
 			t.Fatalf("%s: Apply(%v): %v", doc.Replica(), op.ID, err)
 		}
 	}

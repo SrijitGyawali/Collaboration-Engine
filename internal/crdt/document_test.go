@@ -63,7 +63,12 @@ func TestApplyRemoteOps(t *testing.T) {
 
 	// Alice types; bob receives her ops in order.
 	ops := typeOps(t, alice, Root, "hi")
-	applyAll(t, bob, ops)
+	for _, op := range ops {
+		status, err := bob.Apply(op)
+		if err != nil || status != Applied {
+			t.Fatalf("bob.Apply(%v) = %v, %v; want applied", op.ID, status, err)
+		}
+	}
 
 	if got := bob.Text(); got != "hi" {
 		t.Errorf("bob.Text() = %q, want %q", got, "hi")
@@ -98,7 +103,7 @@ func TestApplyErrors(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := doc.Apply(tt.op); !errors.Is(err, tt.want) {
+			if _, err := doc.Apply(tt.op); !errors.Is(err, tt.want) {
 				t.Errorf("Apply() = %v, want %v", err, tt.want)
 			}
 		})
