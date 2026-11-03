@@ -88,6 +88,44 @@ func TestSeveralOpsWaitForOneCharacter(t *testing.T) {
 	}
 }
 
+// The same op arriving twice while it waits must be buffered once and applied
+// once.
+func TestRepeatWhileWaitingIsBufferedOnce(t *testing.T) {
+	alice := NewDocument("alice")
+	bob := NewDocument("bob")
+	ops := typeOps(t, alice, Root, "ab")
+
+	mustApply(t, bob, ops[1], Pending)
+	mustApply(t, bob, ops[1], Pending)
+	if got := bob.PendingCount(); got != 1 {
+		t.Errorf("PendingCount() = %d, want 1", got)
+	}
+
+	mustApply(t, bob, ops[0], Applied)
+	mustApply(t, bob, ops[1], Duplicate) // a third copy, after release
+	if got := bob.Text(); got != "ab" {
+		t.Errorf("Text() = %q, want %q", got, "ab")
+	}
+}
+
+func TestConflictWhileWaitingIsRejected(t *testing.T) {
+	alice := NewDocument("alice")
+	bob := NewDocument("bob")
+	ops := typeOps(t, alice, Root, "ab")
+
+	mustApply(t, bob, ops[1], Pending)
+	forged := ops[1]
+	forged.Value = 'z'
+	if _, err := bob.Apply(forged); !errors.Is(err, ErrConflictingOp) {
+		t.Errorf("Apply(forged) = %v, want ErrConflictingOp", err)
+	}
+
+	mustApply(t, bob, ops[0], Applied)
+	if got := bob.Text(); got != "ab" {
+		t.Errorf("Text() = %q, want %q", got, "ab")
+	}
+}
+
 // Local edits must name characters the replica has; they never wait.
 func TestLocalEditsOfUnknownCharactersFail(t *testing.T) {
 	doc := NewDocument("alice")

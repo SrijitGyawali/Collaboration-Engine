@@ -63,8 +63,9 @@ type Document struct {
 	// pending holds ops that arrived before the character they depend on,
 	// keyed by that missing character's ID.
 	pending map[ID][]Op
-	// pendingCount is the total number of ops in pending.
-	pendingCount int
+	// waiting indexes the same ops by their own ID, so a repeat of an op
+	// that is still waiting is recognised instead of buffered twice.
+	waiting map[ID]Op
 }
 
 // NewDocument returns an empty document owned by the named replica. Each
@@ -76,6 +77,7 @@ func NewDocument(replica string) *Document {
 		children: make(map[ID][]ID),
 		deletes:  make(map[ID]ID),
 		pending:  make(map[ID][]Op),
+		waiting:  make(map[ID]Op),
 	}
 }
 
@@ -133,13 +135,21 @@ func (d *Document) Apply(op Op) (Status, error) {
 	if seen {
 		return Duplicate, nil
 	}
+	if w, ok := d.waiting[op.ID]; ok {
+		// Already buffered: a repeat changes nothing, a different op under
+		// the same ID is corrupt.
+		if w != op {
+			return 0, fmt.Errorf("%w: %v is already waiting as a different op", ErrConflictingOp, op.ID)
+		}
+		return Pending, nil
+	}
 
 	// Seeing this op means our next local op must sort after it.
 	d.clock.Observe(op.ID)
 
 	if dep := op.Dependency(); !d.has(dep) {
 		d.pending[dep] = append(d.pending[dep], op)
-		d.pendingCount++
+		d.waiting[op.ID] = op
 		return Pending, nil
 	}
 	d.applyReady(op)
@@ -150,7 +160,7 @@ func (d *Document) Apply(op Op) (Status, error) {
 // PendingCount returns how many received ops are waiting for a character
 // that has not arrived yet.
 func (d *Document) PendingCount() int {
-	return d.pendingCount
+	return len(d.waiting)
 }
 
 // has reports whether the character id exists. Root always exists.
@@ -185,15 +195,12 @@ func (d *Document) releasePending(op Op) {
 		id := ready[len(ready)-1]
 		ready = ready[:len(ready)-1]
 
-		waiting := d.pending[id]
+		released := d.pending[id]
 		delete(d.pending, id)
-		d.pendingCount -= len(waiting)
-		for _, w := range waiting {
-			// The same op may have been buffered twice, or arrived again
-			// directly while it waited. Apply it only once.
-			if seen, err := d.alreadyApplied(w); seen || err != nil {
-				continue
-			}
+		// Each op is buffered at most once (see waiting), so every released
+		// op is new and is applied exactly once.
+		for _, w := range released {
+			delete(d.waiting, w.ID)
 			d.applyReady(w)
 			if w.Kind == OpInsert {
 				ready = append(ready, w.ID)
