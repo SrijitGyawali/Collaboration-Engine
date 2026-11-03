@@ -36,6 +36,65 @@ func TestLongDocument(t *testing.T) {
 	}
 }
 
+// typedOps returns the ops for n characters typed in order.
+func typedOps(tb testing.TB, n int) []Op {
+	tb.Helper()
+	doc := NewDocument("alice")
+	ops := make([]Op, 0, n)
+	after := Root
+	for i := range n {
+		op, err := doc.InsertAfter(after, rune('a'+i%26))
+		if err != nil {
+			tb.Fatal(err)
+		}
+		ops = append(ops, op)
+		after = op.ID
+	}
+	return ops
+}
+
+// The worst case for the pending buffer: a long document delivered completely
+// backwards. Every op but the last waits, and the last releases all of them
+// in a single cascade.
+func TestLongDocumentDeliveredBackwards(t *testing.T) {
+	const n = 50_000
+	ops := typedOps(t, n)
+	doc := NewDocument("bob")
+
+	for i := n - 1; i >= 0; i-- {
+		if _, err := doc.Apply(ops[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if got := len(doc.Text()); got != n {
+		t.Errorf("len(Text()) = %d, want %d", got, n)
+	}
+	if got := doc.PendingCount(); got != 0 {
+		t.Errorf("PendingCount() = %d, want 0", got)
+	}
+}
+
+func BenchmarkApplyInOrder10k(b *testing.B) {
+	ops := typedOps(b, 10_000)
+	for b.Loop() {
+		doc := NewDocument("bob")
+		for _, op := range ops {
+			_, _ = doc.Apply(op)
+		}
+	}
+}
+
+func BenchmarkApplyBackwards10k(b *testing.B) {
+	ops := typedOps(b, 10_000)
+	for b.Loop() {
+		doc := NewDocument("bob")
+		for i := len(ops) - 1; i >= 0; i-- {
+			_, _ = doc.Apply(ops[i])
+		}
+	}
+}
+
 func BenchmarkInsertAfter(b *testing.B) {
 	doc := NewDocument("alice")
 	after := Root
