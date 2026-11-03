@@ -30,6 +30,22 @@ func applyAll(t *testing.T, doc *Document, ops []Op) {
 	}
 }
 
+// visibleIDs returns the IDs of the visible characters of doc, in text order.
+// Tests use it to pick a character to edit next to.
+func visibleIDs(doc *Document) []ID {
+	var ids []ID
+	stack := doc.pushChildren(nil, Root)
+	for len(stack) > 0 {
+		id := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if !doc.elements[id].deleted {
+			ids = append(ids, id)
+		}
+		stack = doc.pushChildren(stack, id)
+	}
+	return ids
+}
+
 // assertConverged fails the test unless every doc has the same text.
 func assertConverged(t *testing.T, docs ...*Document) {
 	t.Helper()
