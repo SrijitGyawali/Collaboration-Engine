@@ -34,6 +34,20 @@ func TestOpValidate(t *testing.T) {
 	}
 }
 
+func TestOpDependency(t *testing.T) {
+	parent, target := ID{1, "a"}, ID{2, "b"}
+
+	if got := (Op{Kind: OpInsert, ID: ID{3, "a"}, After: parent}).Dependency(); got != parent {
+		t.Errorf("insert depends on %v, want its parent %v", got, parent)
+	}
+	if got := (Op{Kind: OpDelete, ID: ID{3, "a"}, Target: target}).Dependency(); got != target {
+		t.Errorf("delete depends on %v, want its target %v", got, target)
+	}
+	if got := (Op{Kind: OpInsert, ID: ID{1, "a"}, After: Root}).Dependency(); !got.IsRoot() {
+		t.Errorf("insert at start depends on %v, want Root", got)
+	}
+}
+
 func TestOpKindString(t *testing.T) {
 	if OpInsert.String() != "insert" || OpDelete.String() != "delete" {
 		t.Errorf("got %q and %q", OpInsert, OpDelete)

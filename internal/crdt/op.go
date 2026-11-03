@@ -43,6 +43,19 @@ type Op struct {
 	Value rune
 }
 
+// Dependency returns the character that must exist before op can be applied:
+// the parent of an insert, or the target of a delete. It returns Root for an
+// insert at the start of the document, which depends on nothing.
+//
+// Every op has at most one dependency. That keeps out-of-order delivery
+// simple: an op that arrives early waits for exactly one character.
+func (op Op) Dependency() ID {
+	if op.Kind == OpDelete {
+		return op.Target
+	}
+	return op.After
+}
+
 // ErrInvalidOp is returned for operations that are malformed on their own,
 // before looking at any document.
 var ErrInvalidOp = errors.New("crdt: invalid operation")
