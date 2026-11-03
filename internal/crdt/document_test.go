@@ -96,8 +96,8 @@ func TestApplyErrors(t *testing.T) {
 		op   Op
 		want error
 	}{
-		{"unknown parent", Op{Kind: OpInsert, ID: ID{9, "bob"}, After: ID{8, "bob"}, Value: 'x'}, ErrUnknownParent},
 		{"invalid op", Op{Kind: OpInsert, Value: 'x'}, ErrInvalidOp},
+		{"invalid delete", Op{Kind: OpDelete, ID: ID{9, "bob"}}, ErrInvalidOp},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

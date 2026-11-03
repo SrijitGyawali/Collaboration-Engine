@@ -8,11 +8,11 @@ import (
 )
 
 var (
-	// ErrUnknownParent is returned when an insert names a parent character
-	// this replica has not seen yet.
+	// ErrUnknownParent is returned when a local insert names a character
+	// this replica does not have.
 	ErrUnknownParent = errors.New("crdt: unknown parent")
-	// ErrUnknownTarget is returned when a delete names a character this
-	// replica has not seen yet.
+	// ErrUnknownTarget is returned when a local delete names a character
+	// this replica does not have.
 	ErrUnknownTarget = errors.New("crdt: unknown target")
 	// ErrConflictingOp is returned when an op reuses the ID of an op already
 	// applied but says something different (another character, parent or
@@ -60,6 +60,11 @@ type Document struct {
 	// elements (which records every applied insert) it answers "have I
 	// already applied this op?".
 	deletes map[ID]ID
+	// pending holds ops that arrived before the character they depend on,
+	// keyed by that missing character's ID.
+	pending map[ID][]Op
+	// pendingCount is the total number of ops in pending.
+	pendingCount int
 }
 
 // NewDocument returns an empty document owned by the named replica. Each
@@ -70,6 +75,7 @@ func NewDocument(replica string) *Document {
 		elements: make(map[ID]*element),
 		children: make(map[ID][]ID),
 		deletes:  make(map[ID]ID),
+		pending:  make(map[ID][]Op),
 	}
 }
 
@@ -81,7 +87,14 @@ func (d *Document) Replica() string {
 // InsertAfter inserts value right after the character after (Root for the
 // start of the document) and returns the operation to send to other
 // replicas.
+//
+// Unlike remote ops, a local edit must name a character this replica already
+// has (the user can only type next to what they see), so an unknown after
+// is an error rather than something to wait for.
 func (d *Document) InsertAfter(after ID, value rune) (Op, error) {
+	if !d.has(after) {
+		return Op{}, fmt.Errorf("%w: %v", ErrUnknownParent, after)
+	}
 	op := Op{Kind: OpInsert, ID: d.clock.Next(), After: after, Value: value}
 	if _, err := d.Apply(op); err != nil {
 		return Op{}, err
@@ -90,8 +103,11 @@ func (d *Document) InsertAfter(after ID, value rune) (Op, error) {
 }
 
 // Delete removes the character target and returns the operation to send to
-// other replicas.
+// other replicas. Like InsertAfter, it fails if target is unknown.
 func (d *Document) Delete(target ID) (Op, error) {
+	if target.IsRoot() || !d.has(target) {
+		return Op{}, fmt.Errorf("%w: %v", ErrUnknownTarget, target)
+	}
 	op := Op{Kind: OpDelete, ID: d.clock.Next(), Target: target}
 	if _, err := d.Apply(op); err != nil {
 		return Op{}, err
@@ -101,6 +117,11 @@ func (d *Document) Delete(target ID) (Op, error) {
 
 // Apply applies an operation, local or from another replica, and reports
 // what happened to it. On error the document is unchanged.
+//
+// Ops may arrive in any order. One that depends on a character this replica
+// has not seen yet is held back and reported as Pending; it is applied
+// automatically, together with anything waiting on it, as soon as that
+// character arrives.
 func (d *Document) Apply(op Op) (Status, error) {
 	if err := op.Validate(); err != nil {
 		return 0, err
@@ -112,18 +133,73 @@ func (d *Document) Apply(op Op) (Status, error) {
 	if seen {
 		return Duplicate, nil
 	}
-	switch op.Kind {
-	case OpInsert:
-		err = d.applyInsert(op)
-	case OpDelete:
-		err = d.applyDelete(op)
-	}
-	if err != nil {
-		return 0, err
-	}
+
 	// Seeing this op means our next local op must sort after it.
 	d.clock.Observe(op.ID)
+
+	if dep := op.Dependency(); !d.has(dep) {
+		d.pending[dep] = append(d.pending[dep], op)
+		d.pendingCount++
+		return Pending, nil
+	}
+	d.applyReady(op)
+	d.releasePending(op)
 	return Applied, nil
+}
+
+// PendingCount returns how many received ops are waiting for a character
+// that has not arrived yet.
+func (d *Document) PendingCount() int {
+	return d.pendingCount
+}
+
+// has reports whether the character id exists. Root always exists.
+func (d *Document) has(id ID) bool {
+	if id.IsRoot() {
+		return true
+	}
+	_, ok := d.elements[id]
+	return ok
+}
+
+// applyReady applies an op whose dependency is known to exist.
+func (d *Document) applyReady(op Op) {
+	switch op.Kind {
+	case OpInsert:
+		d.applyInsert(op)
+	case OpDelete:
+		d.applyDelete(op)
+	}
+}
+
+// releasePending applies every buffered op that was waiting for the character
+// op just inserted. Releasing one insert can unblock others (a whole word
+// that arrived backwards), so it works through them with a stack until
+// nothing more is ready. Deletes unblock nothing: no op depends on a delete.
+func (d *Document) releasePending(op Op) {
+	if op.Kind != OpInsert {
+		return
+	}
+	ready := []ID{op.ID}
+	for len(ready) > 0 {
+		id := ready[len(ready)-1]
+		ready = ready[:len(ready)-1]
+
+		waiting := d.pending[id]
+		delete(d.pending, id)
+		d.pendingCount -= len(waiting)
+		for _, w := range waiting {
+			// The same op may have been buffered twice, or arrived again
+			// directly while it waited. Apply it only once.
+			if seen, err := d.alreadyApplied(w); seen || err != nil {
+				continue
+			}
+			d.applyReady(w)
+			if w.Kind == OpInsert {
+				ready = append(ready, w.ID)
+			}
+		}
+	}
 }
 
 // alreadyApplied reports whether op was applied before. Networks retry, so
@@ -149,15 +225,9 @@ func (d *Document) alreadyApplied(op Op) (bool, error) {
 	return false, nil
 }
 
-func (d *Document) applyInsert(op Op) error {
-	if !op.After.IsRoot() {
-		if _, ok := d.elements[op.After]; !ok {
-			return fmt.Errorf("%w: %v (inserting %v)", ErrUnknownParent, op.After, op.ID)
-		}
-	}
+func (d *Document) applyInsert(op Op) {
 	d.elements[op.ID] = &element{id: op.ID, after: op.After, value: op.Value}
 	d.children[op.After] = insertSorted(d.children[op.After], op.ID)
-	return nil
 }
 
 // applyDelete turns the target into a tombstone instead of removing it.
@@ -167,14 +237,9 @@ func (d *Document) applyInsert(op Op) error {
 // parent when it arrives. Keeping the tombstone also makes deletes
 // commutative and safe to repeat: deleting twice, or in any order relative
 // to other deletes, gives the same result.
-func (d *Document) applyDelete(op Op) error {
-	e, ok := d.elements[op.Target]
-	if !ok {
-		return fmt.Errorf("%w: %v (deleting with %v)", ErrUnknownTarget, op.Target, op.ID)
-	}
-	e.deleted = true
+func (d *Document) applyDelete(op Op) {
+	d.elements[op.Target].deleted = true
 	d.deletes[op.ID] = op.Target
-	return nil
 }
 
 // insertSorted adds id to siblings, a list of characters inserted after the
