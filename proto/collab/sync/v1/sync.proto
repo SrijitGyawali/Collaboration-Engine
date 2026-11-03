@@ -23,7 +23,8 @@ service SyncService {
 // ElementId identifies one character for its whole life. Ordered by counter,
 // then replica.
 message ElementId {
-  int64 counter = 1;
+  // Lamport counter; zero only for the document start.
+  uint64 counter = 1;
   string replica = 2;
 }
 
@@ -33,19 +34,23 @@ enum OpType {
   OP_TYPE_DELETE = 2;
 }
 
+// Operation mirrors crdt.Op in internal/crdt.
 message Operation {
   string doc_id = 1;
-  // Globally unique; used for idempotency everywhere.
+  // The string form of id ("counter@replica"). Globally unique; the
+  // idempotency key everywhere, including the Postgres unique constraint.
   string op_id = 2;
   OpType type = 3;
-  // The element inserted, or the element deleted.
+  // The operation's own ID. For an insert it is also the new character's ID.
   ElementId id = 4;
-  // Insert only: the element this one follows. Unset means document start.
+  // Insert only: the character this one follows. Unset means document start.
   ElementId after = 5;
-  // Insert only: the character.
+  // Insert only: the character, as one Unicode code point.
   string value = 6;
   // Assigned by the sync service; zero until stored.
   int64 seq = 7;
+  // Delete only: the character to remove.
+  ElementId target = 8;
 }
 
 message ApplyOperationsRequest {
