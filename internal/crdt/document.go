@@ -21,7 +21,11 @@ var (
 
 // element is one character in the document.
 type element struct {
-	id    ID
+	id ID
+	// after is the character this one was inserted after (its parent in
+	// the tree). It lets a re-delivered insert be checked against the
+	// original, and lets the tree be rebuilt from a snapshot later.
+	after ID
 	value rune
 	// deleted marks a tombstone: the character is hidden from the text but
 	// stays in the tree, because other replicas may still insert after it.
@@ -119,7 +123,7 @@ func (d *Document) applyInsert(op Op) error {
 			return fmt.Errorf("%w: %v (inserting %v)", ErrUnknownParent, op.After, op.ID)
 		}
 	}
-	d.elements[op.ID] = &element{id: op.ID, value: op.Value}
+	d.elements[op.ID] = &element{id: op.ID, after: op.After, value: op.Value}
 	d.children[op.After] = insertSorted(d.children[op.After], op.ID)
 	return nil
 }
