@@ -16,6 +16,8 @@ Most collaborative-editor demos use a ready-made library such as Yjs. This one i
 - operations delivered out of order, twice, or after a reconnect still converge
 - an acknowledged edit is never lost, even if a gateway crashes
 
+The CRDT's guarantees and API are documented in [internal/crdt](internal/crdt/doc.go), with runnable examples in [example_test.go](internal/crdt/example_test.go).
+
 ## Architecture
 
 ```mermaid
@@ -115,6 +117,8 @@ Run `make help` to list every target:
 | `make build` | Build all services into `bin/` |
 | `make wasm` | Build the CRDT WebAssembly module |
 | `make test` | Run Go tests |
+| `make cover` | Run tests with coverage and print the total |
+| `make bench` | Run benchmarks |
 | `make lint` / `make fmt` | Lint or format Go code |
 | `make proto` | Lint and generate gRPC code |
 
@@ -135,7 +139,7 @@ Run `make help` to list every target:
 | Week | Goal | Status |
 | --- | --- | --- |
 | 0 | Repository, tooling, CI | Done |
-| 1 | CRDT core with property tests; WebAssembly build | In progress: inserts, deletes and concurrent ordering done |
+| 1 | CRDT core with property tests; WebAssembly build | In progress: inserts, deletes, concurrent ordering, idempotent and out-of-order delivery done |
 | 2 | WebSocket + PostgreSQL; split into services over gRPC | Not started |
 | 3 | Redis fan-out, presence, offline editing, failure tests | Not started |
 | 4 | Outbox + Kafka workers, metrics, load test, demo | Not started |
