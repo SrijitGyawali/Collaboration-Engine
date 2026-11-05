@@ -2,8 +2,73 @@ package crdt
 
 import (
 	"errors"
+	"fmt"
+	"math/rand/v2"
+	"slices"
 	"testing"
 )
+
+// TestPropertyPositionEditsMatchAString applies random position edits to a
+// Document and to a plain []rune at the same time. A single user's edits
+// must behave exactly like editing an ordinary string, whatever tombstones
+// pile up underneath. The ops are then shuffled into a second replica, which
+// must reach the same text.
+func TestPropertyPositionEditsMatchAString(t *testing.T) {
+	for seed := range seeds() {
+		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
+			rng := rand.New(rand.NewPCG(seed, 3))
+			doc := NewDocument("alice")
+			var model []rune
+			var ops []Op
+
+			for range 200 {
+				var batch []Op
+				var err error
+				switch k := rng.IntN(4); {
+				case k == 0 || len(model) == 0:
+					pos := rng.IntN(len(model) + 1)
+					r := rune('a' + rng.IntN(26))
+					var op Op
+					op, err = doc.InsertAt(pos, r)
+					batch = []Op{op}
+					model = slices.Insert(model, pos, r)
+				case k == 1:
+					pos := rng.IntN(len(model) + 1)
+					s := []rune("xyz")[:1+rng.IntN(3)]
+					batch, err = doc.InsertText(pos, string(s))
+					model = slices.Insert(model, pos, s...)
+				case k == 2:
+					pos := rng.IntN(len(model))
+					var op Op
+					op, err = doc.DeleteAt(pos)
+					batch = []Op{op}
+					model = slices.Delete(model, pos, pos+1)
+				default:
+					pos := rng.IntN(len(model))
+					n := rng.IntN(min(4, len(model)-pos) + 1)
+					batch, err = doc.DeleteRange(pos, n)
+					model = slices.Delete(model, pos, pos+n)
+				}
+				if err != nil {
+					t.Fatal(err)
+				}
+				if got := doc.Text(); got != string(model) {
+					t.Fatalf("Text() = %q, model = %q", got, string(model))
+				}
+				if doc.Len() != len(model) {
+					t.Fatalf("Len() = %d, model has %d", doc.Len(), len(model))
+				}
+				ops = append(ops, batch...)
+			}
+			checkInvariants(t, doc)
+
+			rng.Shuffle(len(ops), func(i, j int) { ops[i], ops[j] = ops[j], ops[i] })
+			if got := deliver(t, ops).Text(); got != string(model) {
+				t.Errorf("replica Text() = %q, want %q", got, string(model))
+			}
+		})
+	}
+}
 
 func TestIDAt(t *testing.T) {
 	doc := NewDocument("alice")
