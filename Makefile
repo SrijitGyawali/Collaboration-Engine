@@ -6,7 +6,9 @@ COMPOSE  := docker compose -f deploy/docker-compose.yml
 
 .DEFAULT_GOAL := help
 
-.PHONY: help build wasm test test-race cover bench lint fmt proto up migrate down reset logs clean
+FUZZTIME ?= 30s
+
+.PHONY: help build wasm test test-race cover bench fuzz lint fmt proto up migrate down reset logs clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-10s %s\n", $$1, $$2}'
@@ -29,6 +31,10 @@ cover: ## Run tests with coverage; writes coverage.out and prints the total
 
 bench: ## Run benchmarks (no tests)
 	$(GO) test -run '^$$' -bench . -benchmem ./...
+
+fuzz: ## Fuzz the CRDT for FUZZTIME per target (default 30s)
+	$(GO) test -run '^$$' -fuzz '^FuzzApply$$' -fuzztime $(FUZZTIME) ./internal/crdt
+	$(GO) test -run '^$$' -fuzz '^FuzzSession$$' -fuzztime $(FUZZTIME) ./internal/crdt
 
 lint: ## Run golangci-lint
 	golangci-lint run ./...
