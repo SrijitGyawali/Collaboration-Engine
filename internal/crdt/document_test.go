@@ -11,6 +11,28 @@ func TestEmptyDocument(t *testing.T) {
 	}
 }
 
+func TestLen(t *testing.T) {
+	doc := NewDocument("alice")
+	if doc.Len() != 0 {
+		t.Errorf("empty Len() = %d, want 0", doc.Len())
+	}
+
+	ops := typeOps(t, doc, Root, "héllo👋") // Len counts characters, not bytes
+	if doc.Len() != 6 {
+		t.Errorf("Len() = %d, want 6", doc.Len())
+	}
+
+	if _, err := doc.Delete(ops[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := doc.Delete(ops[0].ID); err != nil { // deleting again changes nothing
+		t.Fatal(err)
+	}
+	if doc.Len() != 5 {
+		t.Errorf("Len() after delete = %d, want 5", doc.Len())
+	}
+}
+
 func TestTypingInOrder(t *testing.T) {
 	doc := NewDocument("alice")
 	typeOps(t, doc, Root, "hello")

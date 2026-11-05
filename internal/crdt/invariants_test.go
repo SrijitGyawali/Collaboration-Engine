@@ -56,7 +56,11 @@ func checkInvariants(t *testing.T, doc *Document) {
 		t.Errorf("order has %d characters, elements has %d", len(doc.order), len(doc.elements))
 	}
 	listed := make(map[ID]bool, len(doc.order))
+	visible := 0
 	for _, e := range doc.order {
+		if !e.deleted {
+			visible++
+		}
 		if listed[e.id] {
 			t.Errorf("%v is in order twice", e.id)
 		}
@@ -64,6 +68,9 @@ func checkInvariants(t *testing.T, doc *Document) {
 		if doc.elements[e.id] != e {
 			t.Errorf("%v in order is not the element stored under its ID", e.id)
 		}
+	}
+	if doc.Len() != visible {
+		t.Errorf("Len() = %d, but %d characters are visible", doc.Len(), visible)
 	}
 	for id, e := range doc.elements {
 		// A character is always newer than the one it follows, and its

@@ -66,6 +66,8 @@ type Document struct {
 	// hint is the index in order of the character inserted last, the most
 	// likely parent of the next insert (see indexOf).
 	hint int
+	// visible counts the characters in order that are not deleted.
+	visible int
 	// deletes records every applied delete: op ID -> target. Together with
 	// elements (which records every applied insert) it answers "have I
 	// already applied this op?".
@@ -260,6 +262,7 @@ func (d *Document) applyInsert(op Op) {
 	i := d.insertPosition(op)
 	d.order = slices.Insert(d.order, i, e)
 	d.hint = i
+	d.visible++
 }
 
 // applyDelete turns the target into a tombstone instead of removing it.
@@ -270,8 +273,20 @@ func (d *Document) applyInsert(op Op) {
 // commutative and safe to repeat: deleting twice, or in any order relative
 // to other deletes, gives the same result.
 func (d *Document) applyDelete(op Op) {
-	d.elements[op.Target].deleted = true
+	e := d.elements[op.Target]
+	// Two users may delete the same character; only the first delete hides
+	// it, so only the first one changes the count.
+	if !e.deleted {
+		e.deleted = true
+		d.visible--
+	}
 	d.deletes[op.ID] = op.Target
+}
+
+// Len returns the number of characters in the text (deleted ones excluded).
+// It is kept up to date as edits are applied, so it costs O(1).
+func (d *Document) Len() int {
+	return d.visible
 }
 
 // Text returns the current text of the document, without deleted characters.
