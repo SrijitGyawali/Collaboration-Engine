@@ -1,6 +1,46 @@
 package crdt
 
-import "testing"
+import (
+	"slices"
+	"strings"
+	"testing"
+)
+
+// referenceOrder computes the correct order of all characters (tombstones
+// included) from first principles, using only each element's parent and ID:
+// a depth-first walk of the "inserted after" tree, siblings sorted from
+// highest ID to lowest. It shares no code with Document's own ordering, so it
+// can check it, including after Document's storage is rewritten.
+func referenceOrder(doc *Document) []ID {
+	kids := make(map[ID][]ID)
+	for id, e := range doc.elements {
+		kids[e.after] = append(kids[e.after], id)
+	}
+	for _, k := range kids {
+		slices.SortFunc(k, func(a, b ID) int { return b.Compare(a) })
+	}
+	var order []ID
+	var walk func(ID)
+	walk = func(id ID) {
+		for _, c := range kids[id] {
+			order = append(order, c)
+			walk(c)
+		}
+	}
+	walk(Root)
+	return order
+}
+
+// referenceText is the text referenceOrder implies.
+func referenceText(doc *Document) string {
+	var b strings.Builder
+	for _, id := range referenceOrder(doc) {
+		if e := doc.elements[id]; !e.deleted {
+			b.WriteRune(e.value)
+		}
+	}
+	return b.String()
+}
 
 // checkInvariants fails the test if doc's internal structure is inconsistent.
 // Text could look right while the structure underneath is broken (a character
@@ -42,6 +82,11 @@ func checkInvariants(t *testing.T, doc *Document) {
 		if !e.after.IsRoot() && e.after.Compare(id) >= 0 {
 			t.Errorf("%v is not newer than its parent %v", id, e.after)
 		}
+	}
+
+	// The text matches the order computed independently.
+	if got, want := doc.Text(), referenceText(doc); got != want {
+		t.Errorf("Text() = %q, reference model says %q", got, want)
 	}
 
 	// Every applied delete hid a character that exists.
