@@ -89,6 +89,58 @@ func TestIDAtAndPositionOfAgree(t *testing.T) {
 	}
 }
 
+func TestInsertAt(t *testing.T) {
+	doc := NewDocument("alice")
+	steps := []struct {
+		pos  int
+		char rune
+		want string
+	}{
+		{0, 'b', "b"},     // into an empty document
+		{0, 'a', "ab"},    // at the start
+		{2, 'd', "abd"},   // at the end (pos == Len)
+		{2, 'c', "abcd"},  // in the middle
+		{4, '!', "abcd!"}, // at the end again
+	}
+	for _, s := range steps {
+		if _, err := doc.InsertAt(s.pos, s.char); err != nil {
+			t.Fatalf("InsertAt(%d, %q): %v", s.pos, s.char, err)
+		}
+		if got := doc.Text(); got != s.want {
+			t.Fatalf("after InsertAt(%d, %q): Text() = %q, want %q", s.pos, s.char, got, s.want)
+		}
+	}
+
+	for _, pos := range []int{-1, 6} {
+		if _, err := doc.InsertAt(pos, 'x'); !errors.Is(err, ErrOutOfRange) {
+			t.Errorf("InsertAt(%d) = %v, want ErrOutOfRange", pos, err)
+		}
+	}
+}
+
+// Inserting next to deleted characters must still land at the requested
+// position, ahead of the tombstones.
+func TestInsertAtNextToTombstones(t *testing.T) {
+	doc := NewDocument("alice")
+	ops := typeOps(t, doc, Root, "abcd")
+	for _, op := range ops[:2] { // delete "ab": two tombstones at the start
+		if _, err := doc.Delete(op.ID); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if _, err := doc.InsertAt(0, 'x'); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := doc.InsertAt(1, 'y'); err != nil {
+		t.Fatal(err)
+	}
+	if got := doc.Text(); got != "xycd" {
+		t.Errorf("Text() = %q, want %q", got, "xycd")
+	}
+	checkInvariants(t, doc)
+}
+
 func TestIDAtEmptyDocument(t *testing.T) {
 	if _, err := NewDocument("alice").IDAt(0); !errors.Is(err, ErrOutOfRange) {
 		t.Errorf("IDAt(0) = %v, want ErrOutOfRange", err)

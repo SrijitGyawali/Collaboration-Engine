@@ -18,6 +18,28 @@ var (
 	ErrUnknownID = errors.New("crdt: unknown character")
 )
 
+// InsertAt inserts value so that it ends up at position pos, 0 <= pos <=
+// Len() (Len() appends), and returns the op to send to other replicas.
+//
+// It finds the visible character just before pos and inserts after it, or
+// after Root when pos is 0. That is enough to land exactly at pos: the new
+// character gets the highest ID this replica has seen, so it goes straight
+// after that character, ahead of any tombstones or older text that also
+// follow it.
+func (d *Document) InsertAt(pos int, value rune) (Op, error) {
+	if pos < 0 || pos > d.visible {
+		return Op{}, fmt.Errorf("%w: insert at %d (length %d)", ErrOutOfRange, pos, d.visible)
+	}
+	after := Root
+	if pos > 0 {
+		var err error
+		if after, err = d.IDAt(pos - 1); err != nil {
+			return Op{}, err
+		}
+	}
+	return d.InsertAfter(after, value)
+}
+
 // PositionOf returns where character id is in the text: the number of
 // visible characters before it. visible reports whether id itself is still
 // in the text.
