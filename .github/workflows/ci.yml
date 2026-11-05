@@ -45,3 +45,22 @@ jobs:
       - uses: golangci/golangci-lint-action@v8
         with:
           version: v2.14
+
+  fuzz:
+    name: Fuzz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - name: Fuzz the CRDT
+        run: make fuzz FUZZTIME=60s
+      # A failing input is saved under testdata/fuzz; keep it so it can be
+      # downloaded, committed and replayed as a regression test.
+      - name: Upload failing inputs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-failures
+          path: internal/crdt/testdata/fuzz
