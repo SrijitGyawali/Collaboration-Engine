@@ -1,6 +1,70 @@
 package crdt
 
-import "testing"
+import (
+	"errors"
+	"slices"
+	"testing"
+)
+
+// FuzzPositionEdits lets the fuzzer choose a sequence of position edits
+// (InsertAt, InsertText, DeleteAt, DeleteRange) and checks each against a
+// plain []rune. Positions come straight from the input, so out-of-range ones
+// are common: those must fail with ErrOutOfRange and change nothing.
+//
+// Run it for longer with: go test -run '^$' -fuzz FuzzPositionEdits ./internal/crdt
+func FuzzPositionEdits(f *testing.F) {
+	f.Add([]byte{})
+	f.Add([]byte{0, 0, 'a', 0, 1, 'b', 2, 0, 0, 3, 0, 2})
+	f.Add([]byte{1, 0, 3, 3, 1, 5, 2, 9, 0})
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		doc := NewDocument("fuzz")
+		var model []rune
+		for len(data) >= 3 {
+			kind, pos, arg := data[0]%4, int(data[1]), data[2]
+			data = data[3:]
+
+			var err error
+			valid := false
+			switch kind {
+			case 0: // InsertAt
+				r := rune('a' + arg%26)
+				_, err = doc.InsertAt(pos, r)
+				if valid = pos <= len(model); valid {
+					model = slices.Insert(model, pos, r)
+				}
+			case 1: // InsertText
+				s := []rune("hello")[:arg%6]
+				_, err = doc.InsertText(pos, string(s))
+				if valid = pos <= len(model); valid {
+					model = slices.Insert(model, pos, s...)
+				}
+			case 2: // DeleteAt
+				_, err = doc.DeleteAt(pos)
+				if valid = pos < len(model); valid {
+					model = slices.Delete(model, pos, pos+1)
+				}
+			case 3: // DeleteRange
+				n := int(arg % 8)
+				_, err = doc.DeleteRange(pos, n)
+				if valid = pos+n <= len(model); valid {
+					model = slices.Delete(model, pos, pos+n)
+				}
+			}
+
+			if valid && err != nil {
+				t.Fatalf("edit %d at %d: unexpected error %v", kind, pos, err)
+			}
+			if !valid && !errors.Is(err, ErrOutOfRange) {
+				t.Fatalf("edit %d at %d: got %v, want ErrOutOfRange", kind, pos, err)
+			}
+			if got := doc.Text(); got != string(model) {
+				t.Fatalf("Text() = %q, model = %q", got, string(model))
+			}
+		}
+		checkInvariants(t, doc)
+	})
+}
 
 // decodeOps turns arbitrary bytes into ops, 5 bytes per op. Counters and
 // replica names are drawn from small ranges on purpose, so the fuzzer often

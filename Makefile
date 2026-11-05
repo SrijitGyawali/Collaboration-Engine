@@ -35,6 +35,7 @@ bench: ## Run benchmarks (no tests)
 fuzz: ## Fuzz the CRDT for FUZZTIME per target (default 30s)
 	$(GO) test -run '^$$' -fuzz '^FuzzApply$$' -fuzztime $(FUZZTIME) ./internal/crdt
 	$(GO) test -run '^$$' -fuzz '^FuzzSession$$' -fuzztime $(FUZZTIME) ./internal/crdt
+	$(GO) test -run '^$$' -fuzz '^FuzzPositionEdits$$' -fuzztime $(FUZZTIME) ./internal/crdt
 
 lint: ## Run golangci-lint
 	golangci-lint run ./...
