@@ -170,6 +170,55 @@ func TestDeleteAt(t *testing.T) {
 	checkInvariants(t, doc)
 }
 
+func TestInsertText(t *testing.T) {
+	doc := NewDocument("alice")
+	for _, s := range []struct {
+		pos  int
+		text string
+		want string
+	}{
+		{0, "world", "world"},
+		{0, "hello ", "hello world"},
+		{11, "!", "hello world!"},
+		{5, ", dear", "hello, dear world!"},
+		{3, "", "hello, dear world!"}, // empty paste changes nothing
+	} {
+		ops, err := doc.InsertText(s.pos, s.text)
+		if err != nil {
+			t.Fatalf("InsertText(%d, %q): %v", s.pos, s.text, err)
+		}
+		if len(ops) != len([]rune(s.text)) {
+			t.Errorf("InsertText(%d, %q) returned %d ops", s.pos, s.text, len(ops))
+		}
+		if got := doc.Text(); got != s.want {
+			t.Fatalf("Text() = %q, want %q", got, s.want)
+		}
+	}
+
+	if _, err := doc.InsertText(99, "x"); !errors.Is(err, ErrOutOfRange) {
+		t.Errorf("InsertText(99) = %v, want ErrOutOfRange", err)
+	}
+}
+
+// Two users pasting at the same spot concurrently must each keep their text
+// in one piece.
+func TestConcurrentPastesStayWhole(t *testing.T) {
+	alice := NewDocument("alice")
+	bob := NewDocument("bob")
+	base, _ := alice.InsertText(0, "[]")
+	applyAll(t, bob, base)
+
+	a, _ := alice.InsertText(1, "alpha")
+	b, _ := bob.InsertText(1, "beta")
+	applyAll(t, alice, b)
+	applyAll(t, bob, a)
+
+	assertConverged(t, alice, bob)
+	if got := alice.Text(); got != "[alphabeta]" && got != "[betaalpha]" {
+		t.Errorf("Text() = %q, want both pastes whole", got)
+	}
+}
+
 func TestIDAtEmptyDocument(t *testing.T) {
 	if _, err := NewDocument("alice").IDAt(0); !errors.Is(err, ErrOutOfRange) {
 		t.Errorf("IDAt(0) = %v, want ErrOutOfRange", err)

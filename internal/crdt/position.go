@@ -40,6 +40,34 @@ func (d *Document) InsertAt(pos int, value rune) (Op, error) {
 	return d.InsertAfter(after, value)
 }
 
+// InsertText inserts s so that it starts at position pos, 0 <= pos <= Len(),
+// as when the user pastes. It returns one op per character, in order.
+//
+// Only the first character is placed by position. Each next one goes after
+// the one just inserted, which keeps the pasted text together even if
+// another user types at the same spot concurrently, and finds its parent
+// instantly through the insert hint.
+func (d *Document) InsertText(pos int, s string) ([]Op, error) {
+	if pos < 0 || pos > d.visible {
+		return nil, fmt.Errorf("%w: insert at %d (length %d)", ErrOutOfRange, pos, d.visible)
+	}
+	var ops []Op
+	for _, r := range s {
+		var op Op
+		var err error
+		if len(ops) == 0 {
+			op, err = d.InsertAt(pos, r)
+		} else {
+			op, err = d.InsertAfter(ops[len(ops)-1].ID, r)
+		}
+		if err != nil {
+			return ops, err
+		}
+		ops = append(ops, op)
+	}
+	return ops, nil
+}
+
 // DeleteAt deletes the character at position pos, 0 <= pos < Len(), and
 // returns the op to send to other replicas.
 func (d *Document) DeleteAt(pos int) (Op, error) {
