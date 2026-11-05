@@ -219,6 +219,51 @@ func TestConcurrentPastesStayWhole(t *testing.T) {
 	}
 }
 
+func TestDeleteRange(t *testing.T) {
+	doc := NewDocument("alice")
+	if _, err := doc.InsertText(0, "hello, dear world!"); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, s := range []struct {
+		pos, n int
+		want   string
+	}{
+		{5, 6, "hello world!"}, // ", dear" from the middle
+		{11, 1, "hello world"}, // the last character
+		{0, 6, "world"},        // from the start
+		{2, 0, "world"},        // an empty range
+		{0, 5, ""},             // everything
+	} {
+		ops, err := doc.DeleteRange(s.pos, s.n)
+		if err != nil {
+			t.Fatalf("DeleteRange(%d, %d): %v", s.pos, s.n, err)
+		}
+		if len(ops) != s.n {
+			t.Errorf("DeleteRange(%d, %d) returned %d ops", s.pos, s.n, len(ops))
+		}
+		if got := doc.Text(); got != s.want {
+			t.Fatalf("after DeleteRange(%d, %d): Text() = %q, want %q", s.pos, s.n, got, s.want)
+		}
+	}
+	checkInvariants(t, doc)
+}
+
+func TestDeleteRangeOutOfRange(t *testing.T) {
+	doc := NewDocument("alice")
+	if _, err := doc.InsertText(0, "abc"); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range [][2]int{{-1, 1}, {0, -1}, {2, 2}, {4, 0}} {
+		if _, err := doc.DeleteRange(r[0], r[1]); !errors.Is(err, ErrOutOfRange) {
+			t.Errorf("DeleteRange(%d, %d) = %v, want ErrOutOfRange", r[0], r[1], err)
+		}
+	}
+	if got := doc.Text(); got != "abc" {
+		t.Errorf("Text() = %q after rejected ranges, want %q", got, "abc")
+	}
+}
+
 func TestIDAtEmptyDocument(t *testing.T) {
 	if _, err := NewDocument("alice").IDAt(0); !errors.Is(err, ErrOutOfRange) {
 		t.Errorf("IDAt(0) = %v, want ErrOutOfRange", err)

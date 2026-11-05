@@ -78,6 +78,44 @@ func (d *Document) DeleteAt(pos int) (Op, error) {
 	return d.Delete(id)
 }
 
+// DeleteRange deletes n characters starting at position pos, as when the user
+// deletes a selection, and returns one op per deleted character, in text
+// order. The range must lie inside the text: 0 <= pos, 0 <= n and
+// pos+n <= Len().
+//
+// It collects the IDs in one pass over the order list and then deletes them
+// by ID, rather than calling DeleteAt n times, which would look up a
+// position n times.
+func (d *Document) DeleteRange(pos, n int) ([]Op, error) {
+	if pos < 0 || n < 0 || pos+n > d.visible {
+		return nil, fmt.Errorf("%w: delete %d at %d (length %d)", ErrOutOfRange, n, pos, d.visible)
+	}
+	ids := make([]ID, 0, n)
+	seen := 0
+	for _, e := range d.order {
+		if len(ids) == n {
+			break
+		}
+		if e.deleted {
+			continue
+		}
+		if seen >= pos {
+			ids = append(ids, e.id)
+		}
+		seen++
+	}
+
+	ops := make([]Op, 0, n)
+	for _, id := range ids {
+		op, err := d.Delete(id)
+		if err != nil {
+			return ops, err
+		}
+		ops = append(ops, op)
+	}
+	return ops, nil
+}
+
 // PositionOf returns where character id is in the text: the number of
 // visible characters before it. visible reports whether id itself is still
 // in the text.
