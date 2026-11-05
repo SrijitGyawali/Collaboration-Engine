@@ -3,6 +3,7 @@ package crdt
 import (
 	"fmt"
 	"math/rand/v2"
+	"slices"
 	"testing"
 )
 
@@ -144,6 +145,37 @@ func TestPropertyConvergence(t *testing.T) {
 			for _, doc := range n.replicas {
 				if got := doc.PendingCount(); got != 0 {
 					t.Errorf("%s: PendingCount() = %d, want 0", doc.Replica(), got)
+				}
+			}
+		})
+	}
+}
+
+// TestPropertyStateDependsOnlyOnOps checks the property that convergence
+// follows from: a replica's text is a function of the set of ops it has
+// received, not of their order or of how often each one arrived. The ops of
+// a random session are replayed into fresh replicas, shuffled and with
+// repeats, and every replay must match the session's own replicas.
+func TestPropertyStateDependsOnlyOnOps(t *testing.T) {
+	for seed := range seeds() {
+		t.Run(fmt.Sprintf("seed=%d", seed), func(t *testing.T) {
+			n := newNetwork(t, seed, 3)
+			for range 200 {
+				n.step()
+			}
+			n.drain()
+			want := n.replicas[0].Text()
+
+			for replay := range 5 {
+				ops := slices.Clone(n.sent)
+				for range n.rng.IntN(len(ops) + 1) {
+					ops = append(ops, ops[n.rng.IntN(len(ops))])
+				}
+				n.rng.Shuffle(len(ops), func(i, j int) { ops[i], ops[j] = ops[j], ops[i] })
+
+				doc := deliver(t, ops)
+				if got := doc.Text(); got != want {
+					t.Fatalf("replay %d: Text() = %q, want %q", replay, got, want)
 				}
 			}
 		})
