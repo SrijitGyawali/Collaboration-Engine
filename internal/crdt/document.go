@@ -48,7 +48,11 @@ type element struct {
 //	    ├── !   (inserted after h, later)
 //	    └── i
 //
-// which reads "h!i".
+// which reads "h!i". Siblings (characters inserted after the same one) are
+// ordered by ID, highest first; that one rule makes concurrent inserts
+// converge (see insertPosition in order.go).
+//
+// The tree is stored flattened, as a list in reading order.
 //
 // A Document is not safe for concurrent use.
 type Document struct {
@@ -56,9 +60,9 @@ type Document struct {
 	// elements holds every character ever inserted, by ID, including
 	// deleted ones.
 	elements map[ID]*element
-	// children lists, for each character (and Root), the characters inserted
-	// directly after it, sorted by ID from highest to lowest.
-	children map[ID][]ID
+	// order holds the same characters in the order they appear in the text,
+	// tombstones included.
+	order []*element
 	// deletes records every applied delete: op ID -> target. Together with
 	// elements (which records every applied insert) it answers "have I
 	// already applied this op?".
@@ -79,7 +83,6 @@ func NewDocument(replica string, opts ...Option) *Document {
 	d := &Document{
 		clock:      NewClock(replica),
 		elements:   make(map[ID]*element),
-		children:   make(map[ID][]ID),
 		deletes:    make(map[ID]ID),
 		pending:    make(map[ID][]Op),
 		waiting:    make(map[ID]Op),
@@ -249,8 +252,9 @@ func (d *Document) alreadyApplied(op Op) (bool, error) {
 }
 
 func (d *Document) applyInsert(op Op) {
-	d.elements[op.ID] = &element{id: op.ID, after: op.After, value: op.Value}
-	d.children[op.After] = insertSorted(d.children[op.After], op.ID)
+	e := &element{id: op.ID, after: op.After, value: op.Value}
+	d.elements[op.ID] = e
+	d.order = slices.Insert(d.order, d.insertPosition(op), e)
 }
 
 // applyDelete turns the target into a tombstone instead of removing it.
@@ -265,56 +269,13 @@ func (d *Document) applyDelete(op Op) {
 	d.deletes[op.ID] = op.Target
 }
 
-// insertSorted adds id to siblings, a list of characters inserted after the
-// same parent, keeping it sorted by ID from highest to lowest.
-//
-// This one rule makes concurrent inserts converge:
-//
-//   - A local insert always has the highest ID its replica has seen (Lamport
-//     clock), so it lands first, right after its parent, where the user
-//     typed it.
-//   - Two inserts after the same parent made concurrently on different
-//     replicas are ordered by ID on every replica, whatever order they
-//     arrived in, so all replicas show the same text.
-func insertSorted(siblings []ID, id ID) []ID {
-	// Find the first sibling with a lower ID than id. Comparing as
-	// id.Compare(s) (rather than s.Compare(id)) is what makes the order
-	// descending.
-	i, _ := slices.BinarySearchFunc(siblings, id, func(s, target ID) int {
-		return target.Compare(s)
-	})
-	return slices.Insert(siblings, i, id)
-}
-
 // Text returns the current text of the document, without deleted characters.
-//
-// It walks the tree depth-first with an explicit stack rather than recursion.
-// Ordinary typing builds a chain (each character is the child of the one
-// before), so a 100,000-character document would otherwise recurse 100,000
-// levels deep.
 func (d *Document) Text() string {
 	var b strings.Builder
-	stack := d.pushChildren(nil, Root)
-	for len(stack) > 0 {
-		id := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-
-		// Tombstones are skipped, but their children are not: text typed
-		// after a deleted character is still part of the document.
-		if e := d.elements[id]; !e.deleted {
+	for _, e := range d.order {
+		if !e.deleted {
 			b.WriteRune(e.value)
 		}
-		stack = d.pushChildren(stack, id)
 	}
 	return b.String()
-}
-
-// pushChildren pushes the children of id onto stack in reverse, so the
-// highest-ID child is popped, and therefore written, first.
-func (d *Document) pushChildren(stack []ID, id ID) []ID {
-	kids := d.children[id]
-	for i := len(kids) - 1; i >= 0; i-- {
-		stack = append(stack, kids[i])
-	}
-	return stack
 }

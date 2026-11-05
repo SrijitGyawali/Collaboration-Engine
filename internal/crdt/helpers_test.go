@@ -34,14 +34,10 @@ func applyAll(t *testing.T, doc *Document, ops []Op) {
 // Tests use it to pick a character to edit next to.
 func visibleIDs(doc *Document) []ID {
 	var ids []ID
-	stack := doc.pushChildren(nil, Root)
-	for len(stack) > 0 {
-		id := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		if !doc.elements[id].deleted {
-			ids = append(ids, id)
+	for _, e := range doc.order {
+		if !e.deleted {
+			ids = append(ids, e.id)
 		}
-		stack = doc.pushChildren(stack, id)
 	}
 	return ids
 }

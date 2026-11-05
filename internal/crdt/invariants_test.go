@@ -50,41 +50,42 @@ func referenceText(doc *Document) string {
 func checkInvariants(t *testing.T, doc *Document) {
 	t.Helper()
 
-	// Every character is listed exactly once, under its own parent, and
-	// siblings are sorted by ID from highest to lowest.
-	listed := make(map[ID]bool, len(doc.elements))
-	for parent, kids := range doc.children {
-		if !doc.has(parent) {
-			t.Errorf("children of unknown character %v", parent)
+	// The order list holds every character exactly once, and the same
+	// element the ID map points to.
+	if len(doc.order) != len(doc.elements) {
+		t.Errorf("order has %d characters, elements has %d", len(doc.order), len(doc.elements))
+	}
+	listed := make(map[ID]bool, len(doc.order))
+	for _, e := range doc.order {
+		if listed[e.id] {
+			t.Errorf("%v is in order twice", e.id)
 		}
-		for i, id := range kids {
-			e, ok := doc.elements[id]
-			switch {
-			case !ok:
-				t.Errorf("child %v of %v is not an element", id, parent)
-				continue
-			case e.after != parent:
-				t.Errorf("%v is listed under %v but its parent is %v", id, parent, e.after)
-			case listed[id]:
-				t.Errorf("%v is listed twice", id)
-			}
-			listed[id] = true
-			if i > 0 && kids[i-1].Compare(id) <= 0 {
-				t.Errorf("children of %v out of order: %v before %v", parent, kids[i-1], id)
-			}
+		listed[e.id] = true
+		if doc.elements[e.id] != e {
+			t.Errorf("%v in order is not the element stored under its ID", e.id)
 		}
 	}
 	for id, e := range doc.elements {
-		if !listed[id] {
-			t.Errorf("%v is not listed under any parent", id)
-		}
-		// A character is always newer than the one it follows.
+		// A character is always newer than the one it follows, and its
+		// parent exists.
 		if !e.after.IsRoot() && e.after.Compare(id) >= 0 {
 			t.Errorf("%v is not newer than its parent %v", id, e.after)
 		}
+		if !doc.has(e.after) {
+			t.Errorf("parent %v of %v does not exist", e.after, id)
+		}
 	}
 
-	// The text matches the order computed independently.
+	// The order, and therefore the text, matches the order computed
+	// independently from the parent links.
+	if want := referenceOrder(doc); len(want) == len(doc.order) {
+		for i, e := range doc.order {
+			if e.id != want[i] {
+				t.Errorf("order[%d] = %v, reference model says %v", i, e.id, want[i])
+				break
+			}
+		}
+	}
 	if got, want := doc.Text(), referenceText(doc); got != want {
 		t.Errorf("Text() = %q, reference model says %q", got, want)
 	}
