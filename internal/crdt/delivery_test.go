@@ -63,6 +63,7 @@ func deliver(t *testing.T, ops []Op) *Document {
 			t.Fatalf("Apply(%v): %v", op.ID, err)
 		}
 	}
+	checkInvariants(t, doc)
 	return doc
 }
 

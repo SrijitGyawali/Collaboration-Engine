@@ -46,9 +46,13 @@ func visibleIDs(doc *Document) []ID {
 	return ids
 }
 
-// assertConverged fails the test unless every doc has the same text.
+// assertConverged fails the test unless every doc has the same text and a
+// consistent internal structure.
 func assertConverged(t *testing.T, docs ...*Document) {
 	t.Helper()
+	for _, d := range docs {
+		checkInvariants(t, d)
+	}
 	want := docs[0].Text()
 	for _, d := range docs[1:] {
 		if got := d.Text(); got != want {
