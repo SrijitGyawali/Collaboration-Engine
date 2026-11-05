@@ -16,7 +16,11 @@ Most collaborative-editor demos use a ready-made library such as Yjs. This one i
 - operations delivered out of order, twice, or after a reconnect still converge
 - an acknowledged edit is never lost, even if a gateway crashes
 
-The CRDT's guarantees and API are documented in [internal/crdt](internal/crdt/doc.go), with runnable examples in [example_test.go](internal/crdt/example_test.go).
+The CRDT's guarantees and API are documented in [internal/crdt](internal/crdt/doc.go), with runnable examples in [example_test.go](internal/crdt/example_test.go). It is tested three ways:
+
+- **Example tests** for specific cases, such as the classic same-position conflict.
+- **Property tests:** hundreds of random sessions with 3 to 5 replicas on a network that delays, reorders and repeats messages, checked for convergence, for edits landing where they were made, and against an independent reference model.
+- **Fuzz tests** (Go's built-in fuzzer) for malformed operations, fuzzer-chosen editing histories and position edits. These also run in CI on every push.
 
 ## Architecture
 
@@ -119,6 +123,7 @@ Run `make help` to list every target:
 | `make test` | Run Go tests |
 | `make cover` | Run tests with coverage and print the total |
 | `make bench` | Run benchmarks |
+| `make fuzz` | Fuzz the CRDT (`FUZZTIME=30s` per target by default) |
 | `make lint` / `make fmt` | Lint or format Go code |
 | `make proto` | Lint and generate gRPC code |
 
@@ -139,9 +144,22 @@ Run `make help` to list every target:
 | Week | Goal | Status |
 | --- | --- | --- |
 | 0 | Repository, tooling, CI | Done |
-| 1 | CRDT core with property tests; WebAssembly build | In progress: inserts, deletes, concurrent ordering, idempotent and out-of-order delivery done |
+| 1 | CRDT core with property tests; WebAssembly build | In progress: CRDT core, property and fuzz tests, position API done; WebAssembly next |
 | 2 | WebSocket + PostgreSQL; split into services over gRPC | Not started |
 | 3 | Redis fan-out, presence, offline editing, failure tests | Not started |
 | 4 | Outbox + Kafka workers, metrics, load test, demo | Not started |
 
-Day-by-day notes are in [track/](track/README.md). Measured latency and throughput will be published here once the load tests run.
+Day-by-day notes are in [track/](track/README.md).
+
+### CRDT benchmarks so far
+
+Measured on an Intel i7-1165G7 laptop with a 10,000-character document. Run them yourself with `make bench`.
+
+| Operation | Cost |
+| --- | --- |
+| Type a character at the end | about 0.5 µs |
+| Type a character in the middle | about 6 to 15 µs |
+| Apply 10,000 remote ops in order | about 4 to 5 ms |
+| Render the full text | about 0.12 ms |
+
+End-to-end latency and throughput will be published here once the load tests run.
