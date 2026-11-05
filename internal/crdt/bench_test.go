@@ -95,6 +95,60 @@ func BenchmarkApplyBackwards10k(b *testing.B) {
 	}
 }
 
+// Typing at the end of a 10,000-character document through the position API,
+// the most common editor action.
+func BenchmarkInsertAtEnd10k(b *testing.B) {
+	doc := typeN(b, 10_000)
+	for i := 0; b.Loop(); i++ {
+		if _, err := doc.InsertAt(doc.Len(), rune('a'+i%26)); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// Typing in the middle of a 10,000-character document: the worst case for
+// position lookups, about n/2 characters scanned per keystroke. The document
+// is rebuilt every 1,000 keystrokes so it stays close to 10,000 characters.
+func BenchmarkInsertAtMiddle10k(b *testing.B) {
+	doc := typeN(b, 10_000)
+	for i := 0; b.Loop(); i++ {
+		if i%1000 == 999 {
+			b.StopTimer()
+			doc = typeN(b, 10_000)
+			b.StartTimer()
+		}
+		if _, err := doc.InsertAt(doc.Len()/2, rune('a'+i%26)); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+// Pressing Backspace at the end of a long document, refilled as it empties.
+// Each delete leaves a tombstone at the end that later lookups from the end
+// must skip, so this measures the cost of accumulated tombstones too.
+func BenchmarkDeleteAtEnd10k(b *testing.B) {
+	doc := typeN(b, 10_000)
+	for b.Loop() {
+		if doc.Len() == 0 {
+			b.StopTimer()
+			doc = typeN(b, 10_000)
+			b.StartTimer()
+		}
+		if _, err := doc.DeleteAt(doc.Len() - 1); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkIDAtMiddle10k(b *testing.B) {
+	doc := typeN(b, 10_000)
+	for b.Loop() {
+		if _, err := doc.IDAt(5_000); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
 func BenchmarkInsertAfter(b *testing.B) {
 	doc := NewDocument("alice")
 	after := Root
