@@ -63,6 +63,9 @@ type Document struct {
 	// order holds the same characters in the order they appear in the text,
 	// tombstones included.
 	order []*element
+	// hint is the index in order of the character inserted last, the most
+	// likely parent of the next insert (see indexOf).
+	hint int
 	// deletes records every applied delete: op ID -> target. Together with
 	// elements (which records every applied insert) it answers "have I
 	// already applied this op?".
@@ -254,7 +257,9 @@ func (d *Document) alreadyApplied(op Op) (bool, error) {
 func (d *Document) applyInsert(op Op) {
 	e := &element{id: op.ID, after: op.After, value: op.Value}
 	d.elements[op.ID] = e
-	d.order = slices.Insert(d.order, d.insertPosition(op), e)
+	i := d.insertPosition(op)
+	d.order = slices.Insert(d.order, i, e)
+	d.hint = i
 }
 
 // applyDelete turns the target into a tombstone instead of removing it.

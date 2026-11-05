@@ -14,10 +14,17 @@ import "slices"
 // indexOf returns the index of character id in d.order, or -1 for Root (the
 // document start comes before index 0).
 //
-// It scans the list, so it costs O(n) in the worst case.
+// Edits cluster: a user types one character after another, and a cascade of
+// released ops usually arrives in typing order. So the character asked for is
+// very often the one inserted last. indexOf checks that spot first (d.hint),
+// which makes ordinary typing O(1), and falls back to scanning the list,
+// O(n), for anything else.
 func (d *Document) indexOf(id ID) int {
 	if id.IsRoot() {
 		return -1
+	}
+	if d.hint < len(d.order) && d.order[d.hint].id == id {
+		return d.hint
 	}
 	return slices.IndexFunc(d.order, func(e *element) bool { return e.id == id })
 }
