@@ -9,6 +9,7 @@ One file per working day: what was planned, what got built, what was learned, an
 | 2 | Nov 2 | Concurrent insert ordering, tombstone deletes | [2026-11-02](2026-11-02.md) |
 | 3 | Nov 3 | Idempotent re-delivery, pending buffer for early ops | [2026-11-03](2026-11-03.md) |
 | 4 | Nov 4 (done Nov 5) | Invariants, property tests, fuzzing | [2026-11-04](2026-11-04.md) |
+| 5 | Nov 5 | Flat document order, position API, benchmarks | [2026-11-05](2026-11-05.md) |
 
 ## Weekly goals
 
