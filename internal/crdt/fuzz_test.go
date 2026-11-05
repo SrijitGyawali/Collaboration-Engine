@@ -29,6 +29,29 @@ func decodeOps(data []byte) []Op {
 	return ops
 }
 
+// FuzzSession lets the fuzzer choose a whole editing history: which replica
+// acts, whether it edits or receives, where it edits and which message
+// arrives next. Every history must end with all replicas converged. Where the
+// property tests explore random histories, the fuzzer steers towards
+// histories that reach new code paths.
+//
+// Run it for longer with: go test -run '^$' -fuzz FuzzSession ./internal/crdt
+func FuzzSession(f *testing.F) {
+	f.Add([]byte{})
+	f.Add([]byte{0, 0, 0, 0, 1, 0, 0, 1, 5, 0, 1, 5, 0})
+	f.Add([]byte("concurrent edits at the same spot, delivered late"))
+
+	f.Fuzz(func(t *testing.T, data []byte) {
+		n := newByteNetwork(t, data, 3)
+		// A step reads two to four bytes, so this uses roughly all of data.
+		for range len(data) / 3 {
+			n.step()
+		}
+		n.drain()
+		assertConverged(t, n.replicas...)
+	})
+}
+
 // FuzzApply feeds Apply arbitrary, often malformed or conflicting, ops. A
 // replica receives whatever the network hands it, so whatever arrives,
 // Apply must not panic, must leave the document consistent, and must report

@@ -13,7 +13,11 @@ import (
 // the real system (WebSocket retries, Redis, Kafka, catch-up from Postgres)
 // gives the CRDT.
 type network struct {
-	t        *testing.T
+	t *testing.T
+	// pick returns a number in [0, k). Every choice the network makes goes
+	// through it, so the same source of choices replays the same history.
+	pick func(k int) int
+	// rng backs pick for seeded networks; nil for fuzz-driven ones.
 	rng      *rand.Rand
 	replicas []*Document
 	// inbox holds, per replica, ops sent to it but not yet delivered.
@@ -22,12 +26,30 @@ type network struct {
 	sent []Op
 }
 
+// newNetwork returns a network whose choices come from a seeded generator.
 func newNetwork(t *testing.T, seed uint64, replicas int) *network {
-	n := &network{
-		t:     t,
-		rng:   rand.New(rand.NewPCG(seed, 0)),
-		inbox: make([][]Op, replicas),
-	}
+	rng := rand.New(rand.NewPCG(seed, 0))
+	n := newNetworkWith(t, rng.IntN, replicas)
+	n.rng = rng
+	return n
+}
+
+// newByteNetwork returns a network whose choices are read from data, one
+// byte per choice, so a fuzzer can steer it. Once data runs out every
+// choice is 0.
+func newByteNetwork(t *testing.T, data []byte, replicas int) *network {
+	return newNetworkWith(t, func(k int) int {
+		if len(data) == 0 {
+			return 0
+		}
+		b := data[0]
+		data = data[1:]
+		return int(b) % k
+	}, replicas)
+}
+
+func newNetworkWith(t *testing.T, pick func(int) int, replicas int) *network {
+	n := &network{t: t, pick: pick, inbox: make([][]Op, replicas)}
 	for i := range replicas {
 		n.replicas = append(n.replicas, NewDocument(fmt.Sprintf("r%d", i)))
 	}
@@ -36,8 +58,8 @@ func newNetwork(t *testing.T, seed uint64, replicas int) *network {
 
 // step does one random thing: a local edit, a delivery or a re-delivery.
 func (n *network) step() {
-	r := n.rng.IntN(len(n.replicas))
-	switch k := n.rng.IntN(10); {
+	r := n.pick(len(n.replicas))
+	switch k := n.pick(10); {
 	case k < 4:
 		n.edit(r)
 	case k < 9:
@@ -60,17 +82,17 @@ func (n *network) edit(r int) {
 	var op Op
 	var err error
 	var want []rune
-	if len(ids) > 0 && n.rng.IntN(3) == 0 {
-		pos := n.rng.IntN(len(ids))
+	if len(ids) > 0 && n.pick(3) == 0 {
+		pos := n.pick(len(ids))
 		op, err = doc.Delete(ids[pos])
 		want = slices.Delete(slices.Clone(before), pos, pos+1)
 	} else {
-		pos := n.rng.IntN(len(ids) + 1)
+		pos := n.pick(len(ids) + 1)
 		after := Root
 		if pos > 0 {
 			after = ids[pos-1]
 		}
-		value := rune('a' + n.rng.IntN(26))
+		value := rune('a' + n.pick(26))
 		op, err = doc.InsertAfter(after, value)
 		want = slices.Insert(slices.Clone(before), pos, value)
 	}
@@ -96,7 +118,7 @@ func (n *network) deliver(r int) {
 	if len(box) == 0 {
 		return
 	}
-	i := n.rng.IntN(len(box))
+	i := n.pick(len(box))
 	op := box[i]
 	box[i] = box[len(box)-1]
 	n.inbox[r] = box[:len(box)-1]
@@ -112,7 +134,7 @@ func (n *network) redeliver(r int) {
 	if len(n.sent) == 0 {
 		return
 	}
-	n.inbox[r] = append(n.inbox[r], n.sent[n.rng.IntN(len(n.sent))])
+	n.inbox[r] = append(n.inbox[r], n.sent[n.pick(len(n.sent))])
 }
 
 // drain delivers every outstanding message, in random order.
@@ -127,7 +149,7 @@ func (n *network) drain() {
 		if len(busy) == 0 {
 			return
 		}
-		n.deliver(busy[n.rng.IntN(len(busy))])
+		n.deliver(busy[n.pick(len(busy))])
 	}
 }
 
@@ -179,8 +201,8 @@ func TestPropertyStateDependsOnlyOnOps(t *testing.T) {
 
 			for replay := range 5 {
 				ops := slices.Clone(n.sent)
-				for range n.rng.IntN(len(ops) + 1) {
-					ops = append(ops, ops[n.rng.IntN(len(ops))])
+				for range n.pick(len(ops) + 1) {
+					ops = append(ops, ops[n.pick(len(ops))])
 				}
 				n.rng.Shuffle(len(ops), func(i, j int) { ops[i], ops[j] = ops[j], ops[i] })
 
