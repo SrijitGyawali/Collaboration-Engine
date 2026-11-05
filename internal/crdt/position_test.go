@@ -141,6 +141,35 @@ func TestInsertAtNextToTombstones(t *testing.T) {
 	checkInvariants(t, doc)
 }
 
+func TestDeleteAt(t *testing.T) {
+	doc := NewDocument("alice")
+	typeOps(t, doc, Root, "abcde")
+
+	for _, s := range []struct {
+		pos  int
+		want string
+	}{
+		{0, "bcde"}, // first
+		{3, "bcd"},  // last
+		{1, "bd"},   // middle
+		{1, "b"},    // the same position again: now the next character
+	} {
+		if _, err := doc.DeleteAt(s.pos); err != nil {
+			t.Fatalf("DeleteAt(%d): %v", s.pos, err)
+		}
+		if got := doc.Text(); got != s.want {
+			t.Fatalf("after DeleteAt(%d): Text() = %q, want %q", s.pos, got, s.want)
+		}
+	}
+
+	for _, pos := range []int{-1, 1} {
+		if _, err := doc.DeleteAt(pos); !errors.Is(err, ErrOutOfRange) {
+			t.Errorf("DeleteAt(%d) = %v, want ErrOutOfRange", pos, err)
+		}
+	}
+	checkInvariants(t, doc)
+}
+
 func TestIDAtEmptyDocument(t *testing.T) {
 	if _, err := NewDocument("alice").IDAt(0); !errors.Is(err, ErrOutOfRange) {
 		t.Errorf("IDAt(0) = %v, want ErrOutOfRange", err)

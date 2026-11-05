@@ -40,6 +40,16 @@ func (d *Document) InsertAt(pos int, value rune) (Op, error) {
 	return d.InsertAfter(after, value)
 }
 
+// DeleteAt deletes the character at position pos, 0 <= pos < Len(), and
+// returns the op to send to other replicas.
+func (d *Document) DeleteAt(pos int) (Op, error) {
+	id, err := d.IDAt(pos)
+	if err != nil {
+		return Op{}, err
+	}
+	return d.Delete(id)
+}
+
 // PositionOf returns where character id is in the text: the number of
 // visible characters before it. visible reports whether id itself is still
 // in the text.
