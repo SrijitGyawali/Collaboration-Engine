@@ -61,6 +61,38 @@ func ExampleDocument_Apply_duplicate() {
 	// Output: applied duplicate a
 }
 
+// An editor works with positions; the CRDT turns them into position-free ops
+// for the network, and back into positions for remote edits.
+func ExampleDocument_InsertAt() {
+	alice := crdt.NewDocument("alice")
+	bob := crdt.NewDocument("bob")
+
+	// Alice pastes a sentence, then fixes a typo by position.
+	ops, _ := alice.InsertText(0, "helo world")
+	fix, _ := alice.InsertAt(3, 'l')
+	ops = append(ops, fix)
+
+	// Bob receives the ops and asks where the fix landed, to update his view.
+	for _, op := range ops {
+		_, _ = bob.Apply(op)
+	}
+	pos, _, _ := bob.PositionOf(fix.ID)
+
+	fmt.Println(bob.Text(), pos, bob.Len())
+	// Output: hello world 3 11
+}
+
+// Deleting a selection by position.
+func ExampleDocument_DeleteRange() {
+	doc := crdt.NewDocument("alice")
+	_, _ = doc.InsertText(0, "hello cruel world")
+
+	ops, _ := doc.DeleteRange(5, 6) // " cruel"
+
+	fmt.Println(doc.Text(), len(ops))
+	// Output: hello world 6
+}
+
 // Deleted characters are hidden, but text typed after them stays in place.
 func ExampleDocument_Delete() {
 	doc := crdt.NewDocument("alice")
