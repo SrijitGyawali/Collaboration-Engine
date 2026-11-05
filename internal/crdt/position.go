@@ -10,8 +10,50 @@ import (
 // translate between the two. Positions count visible characters (runes) from
 // 0; deleted characters have no position.
 
-// ErrOutOfRange is returned for a position outside the text.
-var ErrOutOfRange = errors.New("crdt: position out of range")
+var (
+	// ErrOutOfRange is returned for a position outside the text.
+	ErrOutOfRange = errors.New("crdt: position out of range")
+	// ErrUnknownID is returned when asked about a character this replica
+	// does not have.
+	ErrUnknownID = errors.New("crdt: unknown character")
+)
+
+// PositionOf returns where character id is in the text: the number of
+// visible characters before it. visible reports whether id itself is still
+// in the text.
+//
+// The editor uses it after applying a remote op, to update its own view
+// without re-rendering everything:
+//
+//   - remote insert of X: PositionOf(X) is where to insert it
+//   - remote delete of X: X is now a tombstone, and PositionOf(X) is where
+//     it was, so that is the character to remove (visible is false)
+//
+// Like IDAt, it counts from whichever end of the order list is closer.
+func (d *Document) PositionOf(id ID) (pos int, visible bool, err error) {
+	i := d.indexOf(id)
+	if i < 0 {
+		return 0, false, fmt.Errorf("%w: %v", ErrUnknownID, id)
+	}
+	visible = !d.order[i].deleted
+	if i < len(d.order)/2 {
+		for _, e := range d.order[:i] {
+			if !e.deleted {
+				pos++
+			}
+		}
+		return pos, visible, nil
+	}
+	// Count what follows instead: everything visible that is not after id
+	// is before it.
+	pos = d.visible
+	for _, e := range d.order[i:] {
+		if !e.deleted {
+			pos--
+		}
+	}
+	return pos, visible, nil
+}
 
 // IDAt returns the ID of the character at position pos, 0 <= pos < Len().
 //
