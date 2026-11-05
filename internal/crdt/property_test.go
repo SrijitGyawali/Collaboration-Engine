@@ -53,21 +53,32 @@ func (n *network) step() {
 func (n *network) edit(r int) {
 	doc := n.replicas[r]
 	ids := visibleIDs(doc)
+	before := []rune(doc.Text())
 
+	// want is what the user expects to see right after the edit: exactly
+	// their change, applied to exactly the text they were looking at.
 	var op Op
 	var err error
+	var want []rune
 	if len(ids) > 0 && n.rng.IntN(3) == 0 {
-		op, err = doc.Delete(ids[n.rng.IntN(len(ids))])
+		pos := n.rng.IntN(len(ids))
+		op, err = doc.Delete(ids[pos])
+		want = slices.Delete(slices.Clone(before), pos, pos+1)
 	} else {
 		pos := n.rng.IntN(len(ids) + 1)
 		after := Root
 		if pos > 0 {
 			after = ids[pos-1]
 		}
-		op, err = doc.InsertAfter(after, rune('a'+n.rng.IntN(26)))
+		value := rune('a' + n.rng.IntN(26))
+		op, err = doc.InsertAfter(after, value)
+		want = slices.Insert(slices.Clone(before), pos, value)
 	}
 	if err != nil {
 		n.t.Fatalf("%s: local edit: %v", doc.Replica(), err)
+	}
+	if got := doc.Text(); got != string(want) {
+		n.t.Fatalf("%s: local edit %v: text %q, want %q", doc.Replica(), op.ID, got, string(want))
 	}
 
 	n.sent = append(n.sent, op)
