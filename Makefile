@@ -8,7 +8,7 @@ COMPOSE  := docker compose -f deploy/docker-compose.yml
 
 FUZZTIME ?= 30s
 
-.PHONY: help build wasm test test-race cover bench fuzz lint fmt proto up migrate down reset logs clean
+.PHONY: help build wasm web-wasm test test-race cover bench fuzz lint fmt proto up migrate down reset logs clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-10s %s\n", $$1, $$2}'
@@ -18,6 +18,13 @@ build: ## Build every service binary into bin/
 
 wasm: ## Build the CRDT WebAssembly module into bin/crdt.wasm
 	GOOS=js GOARCH=wasm $(GO) build -trimpath -ldflags="-s -w" -o $(BIN)/crdt.wasm ./cmd/crdt-wasm
+
+# wasm_exec.js is Go's JavaScript glue for WebAssembly. It must come from the
+# same Go version that built the module, so it is copied, never committed.
+web-wasm: wasm ## Copy the CRDT module and Go's wasm_exec.js into web/public
+	mkdir -p web/public
+	cp $(BIN)/crdt.wasm web/public/crdt.wasm
+	cp "$$($(GO) env GOROOT)/lib/wasm/wasm_exec.js" web/public/wasm_exec.js
 
 test: ## Run all Go tests
 	$(GO) test -count=1 ./...

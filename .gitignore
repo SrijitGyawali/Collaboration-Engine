@@ -8,7 +8,8 @@ coverage.out
 # Local configuration
 .env
 
-# Frontend
+# Frontend (web/public/crdt.wasm is covered by *.wasm above)
+/web/public/wasm_exec.js
 /web/node_modules/
 /web/.next/
 /web/out/
