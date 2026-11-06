@@ -1,3 +1,4 @@
+import { CRDTCheck } from "./crdt-check";
 import styles from "./page.module.css";
 
 export default function Home() {
@@ -9,6 +10,7 @@ export default function Home() {
         written in Go and compiled to WebAssembly, so the browser and the
         server use the same merge code.
       </p>
+      <CRDTCheck />
     </main>
   );
 }
