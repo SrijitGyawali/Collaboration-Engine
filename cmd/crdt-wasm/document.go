@@ -17,6 +17,9 @@ import (
 //	length()                -> number
 //	insertText(pos, text)   -> {ops: Op[]} | {error}
 //	deleteRange(pos, count) -> {ops: Op[]} | {error}
+//	apply(op)               -> {status: "applied"|"duplicate"|"pending"} | {error}
+//	positionOf(id)          -> {pos: number, visible: boolean} | {error}
+//	pendingCount()          -> number
 //	free()                  -> releases the Go callbacks
 //
 // Ops are plain objects in the wire format (see internal/wire), ready to
@@ -69,6 +72,41 @@ func newDocument(_ js.Value, args []js.Value) any {
 			return errorResult(err)
 		}
 		return opsResult(doc.DeleteRange(pos, count))
+	})
+	method("apply", func(_ js.Value, args []js.Value) any {
+		if len(args) < 1 {
+			return errorResult(errors.New("crdt-wasm: apply needs an op"))
+		}
+		w, err := readOp(args[0])
+		if err != nil {
+			return errorResult(err)
+		}
+		op, err := w.ToCRDT()
+		if err != nil {
+			return errorResult(err)
+		}
+		status, err := doc.Apply(op)
+		if err != nil {
+			return errorResult(err)
+		}
+		return map[string]any{"status": status.String()}
+	})
+	method("positionOf", func(_ js.Value, args []js.Value) any {
+		if len(args) < 1 {
+			return errorResult(errors.New("crdt-wasm: positionOf needs an id"))
+		}
+		id, err := readID(args[0], "id")
+		if err != nil {
+			return errorResult(err)
+		}
+		pos, visible, err := doc.PositionOf(crdt.ID{Counter: id.Counter, Replica: id.Replica})
+		if err != nil {
+			return errorResult(err)
+		}
+		return map[string]any{"pos": pos, "visible": visible}
+	})
+	method("pendingCount", func(js.Value, []js.Value) any {
+		return doc.PendingCount()
 	})
 	method("free", func(js.Value, []js.Value) any {
 		for _, f := range funcs {
