@@ -85,6 +85,7 @@ cmd/
   crdt-wasm/      Exposes internal/crdt to the browser as WebAssembly
 internal/
   crdt/           The CRDT library (standard library only)
+  wire/           JSON / JavaScript form of CRDT ops
   store/          PostgreSQL repositories
   pubsub/         Redis Pub/Sub and presence
   events/         Kafka producer and consumers
@@ -94,7 +95,7 @@ internal/
 proto/            gRPC contracts (buf)
 migrations/       PostgreSQL schema (golang-migrate)
 deploy/           Docker Compose for local infrastructure
-web/              Next.js frontend
+web/              Next.js + TypeScript frontend; runs the Go CRDT as WebAssembly
 track/            Daily progress log
 ```
 
@@ -111,6 +112,13 @@ make test
 make build
 ```
 
+To run the web app (it loads the Go CRDT as WebAssembly):
+
+```bash
+make web-install
+make web-dev   # http://localhost:3000
+```
+
 Run `make help` to list every target:
 
 | Target | What it does |
@@ -120,6 +128,10 @@ Run `make help` to list every target:
 | `make migrate` | Apply database migrations |
 | `make build` | Build all services into `bin/` |
 | `make wasm` | Build the CRDT WebAssembly module |
+| `make web-wasm` | Build the module and copy it, with Go's `wasm_exec.js`, into `web/public` |
+| `make web-install` | Install the web app's npm dependencies |
+| `make web-dev` | Rebuild the module and start the web dev server |
+| `make web-test` | Rebuild the module and run the web tests |
 | `make test` | Run Go tests |
 | `make cover` | Run tests with coverage and print the total |
 | `make bench` | Run benchmarks |
@@ -144,7 +156,7 @@ Run `make help` to list every target:
 | Week | Goal | Status |
 | --- | --- | --- |
 | 0 | Repository, tooling, CI | Done |
-| 1 | CRDT core with property tests; WebAssembly build | In progress: CRDT core, property and fuzz tests, position API done; WebAssembly next |
+| 1 | CRDT core with property tests; WebAssembly build | In progress: CRDT core, property and fuzz tests, position API, WebAssembly in the browser done; editor binding next |
 | 2 | WebSocket + PostgreSQL; split into services over gRPC | Not started |
 | 3 | Redis fan-out, presence, offline editing, failure tests | Not started |
 | 4 | Outbox + Kafka workers, metrics, load test, demo | Not started |
