@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Go's WebAssembly glue, copied in by `make web-wasm`; not our code.
+    "public/wasm_exec.js",
   ]),
 ]);
 
