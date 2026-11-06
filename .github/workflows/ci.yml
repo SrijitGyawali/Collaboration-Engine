@@ -46,6 +46,36 @@ jobs:
         with:
           version: v2.14
 
+  web:
+    name: Web app
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: web
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+      # The tests and the build both need the module and Go's wasm_exec.js.
+      - name: Build the CRDT WebAssembly module
+        run: make web-wasm
+        working-directory: .
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Type-check
+        run: npx tsc --noEmit
+      - name: Test the WebAssembly bridge
+        run: npm test
+      - name: Build
+        run: npm run build
+
   fuzz:
     name: Fuzz
     runs-on: ubuntu-latest
