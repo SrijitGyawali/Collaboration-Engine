@@ -119,6 +119,8 @@ make web-install
 make web-dev   # http://localhost:3000
 ```
 
+Then open http://localhost:3000/editor in two tabs and type in both: edits merge through the CRDT. For now they sync between tabs of one browser; the server joins in week 2.
+
 Run `make help` to list every target:
 
 | Target | What it does |
@@ -156,7 +158,7 @@ Run `make help` to list every target:
 | Week | Goal | Status |
 | --- | --- | --- |
 | 0 | Repository, tooling, CI | Done |
-| 1 | CRDT core with property tests; WebAssembly build | In progress: CRDT core, property and fuzz tests, position API, WebAssembly in the browser done; editor binding next |
+| 1 | CRDT core with property tests; WebAssembly build | Done: CRDT with property and fuzz tests, running in the browser; shared editor syncing between tabs |
 | 2 | WebSocket + PostgreSQL; split into services over gRPC | Not started |
 | 3 | Redis fan-out, presence, offline editing, failure tests | Not started |
 | 4 | Outbox + Kafka workers, metrics, load test, demo | Not started |
