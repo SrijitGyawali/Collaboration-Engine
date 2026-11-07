@@ -1,0 +1,24 @@
+.main {
+  max-width: 860px;
+  margin: 0 auto;
+  padding: 32px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.header a,
+.hint a {
+  color: var(--accent);
+}
+
+.hint {
+  color: var(--text-muted);
+}
