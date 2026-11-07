@@ -4,25 +4,15 @@
 // Needs `make web-wasm` first, which puts crdt.wasm and wasm_exec.js in
 // web/public.
 
-import { existsSync, readFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
 
+import { loadTestCRDT } from "@/test/load-crdt";
 import { CRDTError, loadCRDT, type CRDT, type WireOp } from "./index";
-
-const publicFile = (name: string) => fileURLToPath(new URL(`../../../public/${name}`, import.meta.url));
 
 let crdt: CRDT;
 
 beforeAll(async () => {
-  const wasm = publicFile("crdt.wasm");
-  const exec = publicFile("wasm_exec.js");
-  if (!existsSync(wasm) || !existsSync(exec)) {
-    throw new Error("crdt.wasm or wasm_exec.js missing in web/public: run `make web-wasm` from the repo root");
-  }
-  createRequire(import.meta.url)(exec); // defines globalThis.Go
-  crdt = await loadCRDT({ wasmBytes: readFileSync(wasm) });
+  crdt = await loadTestCRDT();
 });
 
 /** Sends ops through JSON, as the network will. */
