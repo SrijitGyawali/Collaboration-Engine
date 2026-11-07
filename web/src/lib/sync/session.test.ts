@@ -137,6 +137,61 @@ describe("CollabSession", () => {
     expect(b.log).toHaveLength(3);
   });
 
+  it("catches a newly opened session up with the existing text", () => {
+    const hub = new Hub();
+    const a = new CollabSession(crdt, hub.connect(), "a");
+    a.applyLocal(insert(0, "hello world"));
+    a.applyLocal(remove(0, 6));
+
+    const late = new CollabSession(crdt, hub.connect(), "late");
+
+    expect(late.text).toBe("world");
+    expect(late.log).toHaveLength(a.log.length);
+  });
+
+  it("catches up from several open sessions without duplicating text", () => {
+    const hub = new Hub();
+    const a = new CollabSession(crdt, hub.connect(), "a");
+    const b = new CollabSession(crdt, hub.connect(), "b");
+    a.applyLocal(insert(0, "ab"));
+    b.applyLocal(insert(2, "cd"));
+
+    // Both a and b answer the hello; the second answer is all duplicates.
+    const late = new CollabSession(crdt, hub.connect(), "late");
+    const third = new CollabSession(crdt, hub.connect(), "third");
+
+    expect(late.text).toBe("abcd");
+    expect(third.text).toBe("abcd");
+  });
+
+  it("only applies catch-up answers addressed to it", () => {
+    const hub = new Hub();
+    const b = new CollabSession(crdt, hub.connect(), "b");
+    const other = hub.connect();
+    const op = { kind: "insert", id: { counter: 1, replica: "x" }, value: "x" } as const;
+
+    other.send({ type: "state", from: "x", to: "someone-else", ops: [op] });
+    expect(b.text).toBe("");
+
+    other.send({ type: "state", from: "x", to: "b", ops: [op] });
+    expect(b.text).toBe("x");
+  });
+
+  it("answers a hello only when it has something to send", () => {
+    const hub = new Hub();
+    const listener = hub.connect();
+    const received: unknown[] = [];
+    listener.onMessage((m) => received.push(m));
+
+    const a = new CollabSession(crdt, hub.connect(), "a");
+    listener.send({ type: "hello", from: "newcomer" });
+    expect(received.filter((m) => (m as { type: string }).type === "state")).toHaveLength(0);
+
+    a.applyLocal(insert(0, "x"));
+    listener.send({ type: "hello", from: "newcomer" });
+    expect(received).toContainEqual(expect.objectContaining({ type: "state", from: "a", to: "newcomer" }));
+  });
+
   it("cannot be used after close", () => {
     const { a } = pair();
     a.close();

@@ -47,6 +47,8 @@ export class CollabSession {
     this.#doc = crdt.newDocument(replica);
     this.#transport = transport;
     transport.onMessage((data) => this.#receive(data));
+    // Ask the tabs already open for everything they have (see "state").
+    transport.send({ type: "hello", from: replica });
   }
 
   /** The current text of this replica. */
@@ -104,8 +106,24 @@ export class CollabSession {
     if (this.#closed || !message || message.from === this.replica) {
       return;
     }
-    if (message.type === "ops") {
-      this.#applyRemote(message.ops);
+    switch (message.type) {
+      case "ops":
+        this.#applyRemote(message.ops);
+        break;
+      case "hello":
+        // A tab just opened: send it every op we have. If we have none,
+        // there is nothing to catch up on.
+        if (this.#log.length > 0) {
+          this.#transport.send({ type: "state", from: this.replica, to: message.from, ops: [...this.#log] });
+        }
+        break;
+      case "state":
+        // Every open tab answers a hello, and the answers go to everyone
+        // on the channel; only the tab that asked applies them.
+        if (message.to === this.replica) {
+          this.#applyRemote(message.ops);
+        }
+        break;
     }
   }
 
