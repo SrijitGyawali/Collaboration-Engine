@@ -108,6 +108,64 @@ describe("TextareaBinding", () => {
     expect(a.el.selectionStart).toBe(0); // untouched: a never had focus
   });
 
+  it("waits for an input method to finish composing", () => {
+    const hub = new Hub();
+    const a = tab(hub, "a");
+    const b = tab(hub, "b");
+    a.el.focus();
+    a.el.type("ab");
+    a.el.setSelectionRange(1, 1);
+
+    // a starts composing "漢" between "a" and "b" (via "k", "か").
+    a.el.dispatch("compositionstart");
+    a.el.type("k");
+    a.el.setSelectionRange(1, 2);
+    a.el.type("か");
+    expect(b.el.value).toBe("ab"); // nothing sent mid-composition
+
+    // b edits meanwhile; a's textarea is left alone so the IME survives.
+    b.el.focus();
+    b.el.setSelectionRange(2, 2);
+    b.el.type("!");
+    expect(a.el.value).toBe("aかb");
+
+    // a commits "漢".
+    a.el.focus();
+    a.el.setSelectionRange(1, 2);
+    a.el.type("漢");
+    a.el.dispatch("compositionend");
+
+    expect(a.el.value).toBe("a漢b!");
+    expect(b.el.value).toBe("a漢b!");
+    expect(a.el.value.slice(0, a.el.selectionStart)).toBe("a漢");
+  });
+
+  it("places composed text correctly when a remote edit lands before it", () => {
+    const hub = new Hub();
+    const a = tab(hub, "a");
+    const b = tab(hub, "b");
+    a.el.focus();
+    a.el.type("ab");
+    a.el.setSelectionRange(1, 1);
+
+    a.el.dispatch("compositionstart");
+    a.el.type("か");
+
+    // b inserts at the very start while a is composing.
+    b.el.focus();
+    b.el.setSelectionRange(0, 0);
+    b.el.type(">> ");
+
+    a.el.focus();
+    a.el.setSelectionRange(1, 2);
+    a.el.type("漢");
+    a.el.dispatch("compositionend");
+
+    expect(a.el.value).toBe(">> a漢b");
+    expect(b.el.value).toBe(">> a漢b");
+    expect(a.el.value.slice(0, a.el.selectionStart)).toBe(">> a漢");
+  });
+
   it("stops syncing after dispose", () => {
     const hub = new Hub();
     const a = tab(hub, "a");
