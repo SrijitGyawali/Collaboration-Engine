@@ -11,6 +11,7 @@ One file per working day: what was planned, what got built, what was learned, an
 | 4 | Nov 4 (done Nov 5) | Invariants, property tests, fuzzing | [2026-11-04](2026-11-04.md) |
 | 5 | Nov 5 | Flat document order, position API, benchmarks | [2026-11-05](2026-11-05.md) |
 | 6 | Nov 6 | WebAssembly bridge, Next.js app, CRDT in the browser | [2026-11-06](2026-11-06.md) |
+| 7 | Nov 7 | Editor binding, tab-to-tab sync, IME support | [2026-11-07](2026-11-07.md) |
 
 ## Weekly goals
 
