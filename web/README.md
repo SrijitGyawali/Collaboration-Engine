@@ -18,6 +18,19 @@ make web-dev
 
 `make web-dev` rebuilds the WebAssembly module into `web/public` and starts the dev server. Open http://localhost:3000. The landing page loads the module and runs a live two-replica conflict check.
 
+To edit together, open http://localhost:3000/editor in two tabs and type in both. `?doc=name` opens a different document. Until the server arrives (week 2), edits sync between tabs of the same browser through a `BroadcastChannel`.
+
+## How the editor syncs
+
+```text
+textarea ──input──▶ TextareaBinding ──Change──▶ CollabSession ──ops──▶ Transport ──▶ other tabs
+textarea ◀─value + caret── TextareaBinding ◀─RemoteUpdate── CollabSession ◀─ops── Transport
+```
+
+- **TextareaBinding** (`src/lib/editor/binding.ts`) diffs each input against the previous text, using the caret to place repeated characters. It moves the caret through remote changes so it stays next to the same characters, and waits while an input method (IME) is composing.
+- **CollabSession** (`src/lib/sync/session.ts`) owns the tab's CRDT replica. It turns changes into ops, applies incoming ops, and reports exactly where each one landed. A new tab says hello and is sent the full op log.
+- **Transport** (`src/lib/sync/transport.ts`) is a BroadcastChannel today and will be a WebSocket next.
+
 ## Using the CRDT
 
 ```ts
@@ -37,7 +50,11 @@ Errors from Go come back as a thrown `CRDTError`. Positions count characters (Un
 
 | Path | What it holds |
 | --- | --- |
-| `src/app/` | Pages (App Router) and the live CRDT check |
+| `src/app/` | Pages (App Router): landing page with the live CRDT check, `/editor` |
+| `src/components/collab-editor.tsx` | The editor component: textarea, session, status line |
+| `src/lib/editor/` | Code point helpers, diffing, caret transforms, the textarea binding |
+| `src/lib/sync/` | Sync messages, transports, `CollabSession` |
+| `src/test/` | Test helpers: real module loader, in-memory hub, fake textarea |
 | `src/lib/crdt/types.ts` | Types for ops and the raw bridge, matching `internal/wire` |
 | `src/lib/crdt/loader.ts` | Loads and starts the WebAssembly module |
 | `src/lib/crdt/document.ts` | `CRDTDocument`, the API the app uses |
