@@ -8,7 +8,7 @@ COMPOSE  := docker compose -f deploy/docker-compose.yml
 
 FUZZTIME ?= 30s
 
-.PHONY: help build wasm web-wasm web-install web-test web-dev test test-race cover bench fuzz lint fmt proto up migrate down reset logs clean
+.PHONY: help build wasm web-wasm web-install web-test web-dev test test-short test-race cover bench fuzz lint fmt proto up migrate down reset logs clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-10s %s\n", $$1, $$2}'
@@ -35,8 +35,11 @@ web-test: web-wasm ## Rebuild the module and run the web app's tests
 web-dev: web-wasm ## Rebuild the module and start the web dev server on :3000
 	cd web && npm run dev
 
-test: ## Run all Go tests
+test: ## Run all Go tests (the store's need Docker, and are skipped without it)
 	$(GO) test -count=1 ./...
+
+test-short: ## Run Go tests that need no Docker, with fewer random seeds
+	$(GO) test -count=1 -short ./...
 
 test-race: ## Run all Go tests with the race detector (needs cgo)
 	$(GO) test -race -count=1 ./...
