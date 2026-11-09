@@ -1,0 +1,315 @@
+package gateway
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/coder/websocket"
+
+	"github.com/SrijitGyawali/Collaboration-Engine/internal/crdt"
+	"github.com/SrijitGyawali/Collaboration-Engine/internal/store/memstore"
+	"github.com/SrijitGyawali/Collaboration-Engine/internal/syncsvc"
+	"github.com/SrijitGyawali/Collaboration-Engine/internal/wire"
+)
+
+func quietLog() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
+// startServer runs a gateway over an in-memory sync service and returns its
+// ws:// URL.
+func startServer(t *testing.T, backend Backend) string {
+	t.Helper()
+	if backend == nil {
+		svc := syncsvc.New(memstore.New(), quietLog(), syncsvc.Options{})
+		t.Cleanup(svc.Close)
+		backend = svc
+	}
+	srv := NewServer(Config{Backend: backend, Log: quietLog(), AllowedOrigins: []string{"app.example"}})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(func() {
+		srv.Close() // disconnect clients first; hijacked connections block ts.Close
+		ts.Close()
+	})
+	return "ws" + strings.TrimPrefix(ts.URL, "http")
+}
+
+// closeBody closes a handshake response body, if there is one.
+func closeBody(resp *http.Response) {
+	if resp != nil && resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+}
+
+type testClient struct {
+	t    *testing.T
+	conn *websocket.Conn
+}
+
+func dial(t *testing.T, url string) *testClient {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	conn, resp, err := websocket.Dial(ctx, url, nil)
+	closeBody(resp)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.CloseNow() })
+	return &testClient{t: t, conn: conn}
+}
+
+func (c *testClient) send(v any) {
+	c.t.Helper()
+	data, err := json.Marshal(v)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	if err := c.conn.Write(c.t.Context(), websocket.MessageText, data); err != nil {
+		c.t.Fatalf("write: %v", err)
+	}
+}
+
+// next reads one server message, failing after 2 s.
+func (c *testClient) next() serverMessage {
+	c.t.Helper()
+	msg, err := c.tryNext(2 * time.Second)
+	if err != nil {
+		c.t.Fatalf("read: %v", err)
+	}
+	return msg
+}
+
+func (c *testClient) tryNext(wait time.Duration) (serverMessage, error) {
+	ctx, cancel := context.WithTimeout(c.t.Context(), wait)
+	defer cancel()
+	_, data, err := c.conn.Read(ctx)
+	if err != nil {
+		return serverMessage{}, err
+	}
+	var msg serverMessage
+	if err := json.Unmarshal(data, &msg); err != nil {
+		c.t.Fatalf("server sent invalid JSON %s: %v", data, err)
+	}
+	return msg, nil
+}
+
+// join joins doc and returns the history received and the joined seq.
+func (c *testClient) join(doc string) ([]seqOp, int64) {
+	c.t.Helper()
+	c.send(map[string]any{"type": "join", "doc": doc})
+	var history []seqOp
+	for {
+		msg := c.next()
+		switch msg.Type {
+		case typeRemote:
+			history = append(history, msg.Ops...)
+		case typeJoined:
+			return history, msg.Seq
+		default:
+			c.t.Fatalf("unexpected %q while joining", msg.Type)
+		}
+	}
+}
+
+// closeStatus reads until the server closes the connection.
+func (c *testClient) closeStatus() websocket.StatusCode {
+	c.t.Helper()
+	for {
+		if _, err := c.tryNext(2 * time.Second); err != nil {
+			return websocket.CloseStatus(err)
+		}
+	}
+}
+
+func typed(replica, text string) []wire.Op {
+	ops, err := crdt.NewDocument(replica).InsertText(0, text)
+	if err != nil {
+		panic(err)
+	}
+	out := make([]wire.Op, len(ops))
+	for i, op := range ops {
+		out[i] = wire.FromCRDT(op)
+	}
+	return out
+}
+
+func TestJoinAnEmptyDocument(t *testing.T) {
+	c := dial(t, startServer(t, nil))
+	history, seq := c.join("doc")
+	if len(history) != 0 || seq != 0 {
+		t.Errorf("history %v, seq %d", history, seq)
+	}
+}
+
+func TestOpsAreAckedAndBroadcast(t *testing.T) {
+	url := startServer(t, nil)
+	alice, bob := dial(t, url), dial(t, url)
+	alice.join("doc")
+	bob.join("doc")
+
+	alice.send(map[string]any{"type": "ops", "ops": typed("alice", "hi")})
+
+	ack := alice.next()
+	if ack.Type != typeAck || len(ack.Acks) != 2 || ack.Acks[0].Seq != 1 || ack.Acks[1].Seq != 2 {
+		t.Fatalf("alice got %+v", ack)
+	}
+	remote := bob.next()
+	if remote.Type != typeRemote || len(remote.Ops) != 2 || remote.Ops[1].Seq != 2 || remote.Ops[1].Op.Value != "i" {
+		t.Fatalf("bob got %+v", remote)
+	}
+}
+
+func TestLateJoinerGetsHistory(t *testing.T) {
+	url := startServer(t, nil)
+	alice := dial(t, url)
+	alice.join("doc")
+	alice.send(map[string]any{"type": "ops", "ops": typed("alice", "hello")})
+	alice.next() // ack
+
+	history, seq := dial(t, url).join("doc")
+	if len(history) != 5 || seq != 5 || history[4].Op.Value != "o" {
+		t.Errorf("history %+v, seq %d", history, seq)
+	}
+}
+
+// A resent op is acked as a duplicate and not broadcast again; a rejected op
+// is acked with its error and never broadcast.
+func TestDuplicatesAndRejectionsAreNotBroadcast(t *testing.T) {
+	url := startServer(t, nil)
+	alice, bob := dial(t, url), dial(t, url)
+	alice.join("doc")
+	bob.join("doc")
+	ops := typed("alice", "ab")
+
+	alice.send(map[string]any{"type": "ops", "ops": ops[:1]})
+	alice.next()
+	bob.next()
+
+	malformed := wire.Op{Kind: "insert", ID: wire.ID{Counter: 9, Replica: "alice"}, Value: "too long"}
+	alice.send(map[string]any{"type": "ops", "ops": []wire.Op{ops[0], malformed, ops[1]}})
+	ack := alice.next()
+	if !ack.Acks[0].Duplicate || ack.Acks[0].Seq != 1 {
+		t.Errorf("resent op: %+v", ack.Acks[0])
+	}
+	if ack.Acks[1].Error == "" || ack.Acks[1].Seq != 0 {
+		t.Errorf("malformed op: %+v", ack.Acks[1])
+	}
+	if ack.Acks[2].Seq != 2 {
+		t.Errorf("new op: %+v", ack.Acks[2])
+	}
+
+	remote := bob.next()
+	if len(remote.Ops) != 1 || remote.Ops[0].Seq != 2 {
+		t.Errorf("bob should only get the new op, got %+v", remote.Ops)
+	}
+}
+
+func TestRoomsAreSeparate(t *testing.T) {
+	url := startServer(t, nil)
+	alice, other := dial(t, url), dial(t, url)
+	alice.join("one")
+	other.join("two")
+
+	alice.send(map[string]any{"type": "ops", "ops": typed("alice", "x")})
+	alice.next()
+
+	if msg, err := other.tryNext(200 * time.Millisecond); err == nil {
+		t.Errorf("a client in another room received %+v", msg)
+	}
+}
+
+func TestFirstMessageMustBeJoin(t *testing.T) {
+	url := startServer(t, nil)
+	for name, msg := range map[string]any{
+		"ops before join":  map[string]any{"type": "ops"},
+		"invalid document": map[string]any{"type": "join", "doc": "has space"},
+	} {
+		c := dial(t, url)
+		c.send(msg)
+		if got := c.closeStatus(); got != websocket.StatusPolicyViolation {
+			t.Errorf("%s: close status %v, want policy violation", name, got)
+		}
+	}
+}
+
+func TestMalformedMessagesCloseTheConnection(t *testing.T) {
+	c := dial(t, startServer(t, nil))
+	c.join("doc")
+	if err := c.conn.Write(t.Context(), websocket.MessageText, []byte("{not json")); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.closeStatus(); got != websocket.StatusUnsupportedData {
+		t.Errorf("close status %v, want unsupported data", got)
+	}
+}
+
+func TestOtherWebsitesCannotConnect(t *testing.T) {
+	url := startServer(t, nil)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+
+	header := http.Header{"Origin": {"https://evil.example"}}
+	conn, resp, err := websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: header})
+	closeBody(resp)
+	if err == nil {
+		_ = conn.CloseNow()
+		t.Fatal("connection from another origin was accepted")
+	}
+	if resp == nil || resp.StatusCode != http.StatusForbidden {
+		t.Errorf("response = %v, want 403", resp)
+	}
+
+	header.Set("Origin", "https://app.example")
+	conn, resp, err = websocket.Dial(ctx, url, &websocket.DialOptions{HTTPHeader: header})
+	closeBody(resp)
+	if err != nil {
+		t.Fatalf("allowed origin refused: %v", err)
+	}
+	_ = conn.CloseNow()
+}
+
+// failingBackend stands in for a sync service whose database is down.
+type failingBackend struct{}
+
+func (failingBackend) Apply(context.Context, string, []wire.Op) ([]syncsvc.Ack, error) {
+	return nil, errors.New("database unreachable")
+}
+
+func (failingBackend) OperationsSince(context.Context, string, int64, int) ([]syncsvc.SeqOp, error) {
+	return nil, nil
+}
+
+// When edits cannot be saved, the client is told to come back later; it then
+// resends them.
+func TestBackendFailureAsksTheClientToRetry(t *testing.T) {
+	c := dial(t, startServer(t, failingBackend{}))
+	c.join("doc")
+	c.send(map[string]any{"type": "ops", "ops": typed("alice", "x")})
+	if got := c.closeStatus(); got != websocket.StatusTryAgainLater {
+		t.Errorf("close status %v, want try again later", got)
+	}
+}
+
+func TestCloseDisconnectsClients(t *testing.T) {
+	svc := syncsvc.New(memstore.New(), quietLog(), syncsvc.Options{})
+	defer svc.Close()
+	srv := NewServer(Config{Backend: svc, Log: quietLog()})
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	c := dial(t, "ws"+strings.TrimPrefix(ts.URL, "http"))
+	c.join("doc")
+	go srv.Close()
+	if got := c.closeStatus(); got != websocket.StatusGoingAway {
+		t.Errorf("close status %v, want going away", got)
+	}
+}
