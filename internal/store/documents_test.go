@@ -61,14 +61,21 @@ func TestEnsureDocumentRejectsInvalidNames(t *testing.T) {
 	s := newTestStore(t)
 	ctx := t.Context()
 
+	// ValidDocumentID must agree with the database on every case.
 	for _, id := range []string{"", "has space", "a/b", strings.Repeat("x", 41)} {
 		if _, err := s.EnsureDocument(ctx, id); !errors.Is(err, ErrInvalidDocumentID) {
 			t.Errorf("EnsureDocument(%q) = %v, want ErrInvalidDocumentID", id, err)
+		}
+		if ValidDocumentID(id) {
+			t.Errorf("ValidDocumentID(%q) = true, but the database rejects it", id)
 		}
 	}
 	for _, id := range []string{"a", "my_doc-1", strings.Repeat("x", 40), "550e8400-e29b-41d4-a716-446655440000"} {
 		if _, err := s.EnsureDocument(ctx, id); err != nil {
 			t.Errorf("EnsureDocument(%q): %v", id, err)
+		}
+		if !ValidDocumentID(id) {
+			t.Errorf("ValidDocumentID(%q) = false, but the database accepts it", id)
 		}
 	}
 }
