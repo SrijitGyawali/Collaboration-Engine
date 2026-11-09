@@ -116,6 +116,17 @@ func appendOperations(ctx context.Context, tx pgx.Tx, docID string, ops []NewOpe
 		acks[i] = Ack{OpID: op.OpID, Seq: seq}
 		batch.Queue(`INSERT INTO operations (doc_id, seq, op_id, payload) VALUES ($1, $2, $3, $4)`,
 			docID, seq, op.OpID, op.Payload)
+
+		// The event commits with the operation (the transactional outbox).
+		// Publishing to Kafka directly here could succeed for an edit that
+		// then fails to commit, or the reverse if the process died between
+		// the two. The relay publishes what is committed, later.
+		event, err := json.Marshal(opEvent{DocID: docID, Seq: seq, OpID: op.OpID, Op: op.Payload})
+		if err != nil {
+			return nil, err
+		}
+		batch.Queue(`INSERT INTO outbox (topic, key, payload) VALUES ($1, $2, $3)`,
+			TopicDocEvents, docID, event)
 	}
 	if batch.Len() > 0 {
 		if err := tx.SendBatch(ctx, batch).Close(); err != nil {
