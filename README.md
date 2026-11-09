@@ -107,7 +107,7 @@ track/            Daily progress log
 git clone https://github.com/SrijitGyawali/Collaboration-Engine.git
 cd Collaboration-Engine
 cp .env.example .env
-make up      # Postgres, Redis, Redpanda + migrations
+make up      # Postgres (15432), Redis (16379), Redpanda (19092) + migrations
 make test
 make build
 ```
@@ -134,7 +134,8 @@ Run `make help` to list every target:
 | `make web-install` | Install the web app's npm dependencies |
 | `make web-dev` | Rebuild the module and start the web dev server |
 | `make web-test` | Rebuild the module and run the web tests |
-| `make test` | Run Go tests |
+| `make test` | Run Go tests (the data layer's tests use a real Postgres through Docker) |
+| `make test-short` | Run only the Go tests that need no Docker |
 | `make cover` | Run tests with coverage and print the total |
 | `make bench` | Run benchmarks |
 | `make fuzz` | Fuzz the CRDT (`FUZZTIME=30s` per target by default) |
@@ -159,7 +160,7 @@ Run `make help` to list every target:
 | --- | --- | --- |
 | 0 | Repository, tooling, CI | Done |
 | 1 | CRDT core with property tests; WebAssembly build | Done: CRDT with property and fuzz tests, running in the browser; shared editor syncing between tabs |
-| 2 | WebSocket + PostgreSQL; split into services over gRPC | Not started |
+| 2 | WebSocket + PostgreSQL; split into services over gRPC | In progress: data layer done and tested on real PostgreSQL; WebSocket server next |
 | 3 | Redis fan-out, presence, offline editing, failure tests | Not started |
 | 4 | Outbox + Kafka workers, metrics, load test, demo | Not started |
 
