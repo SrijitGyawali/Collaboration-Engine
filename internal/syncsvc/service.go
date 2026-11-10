@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/store"
+	"github.com/SrijitGyawali/Collaboration-Engine/internal/store/memstore"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/wire"
 )
 
@@ -30,6 +31,12 @@ type Store interface {
 	AppendOperations(ctx context.Context, docID string, ops []store.NewOperation) ([]store.Ack, error)
 	OperationsSince(ctx context.Context, docID string, afterSeq int64, limit int) ([]store.Operation, error)
 }
+
+// Both stores must keep satisfying Store; this fails to compile otherwise.
+var (
+	_ Store = (*store.Store)(nil)
+	_ Store = (*memstore.Store)(nil)
+)
 
 // Ack is the outcome of one operation passed to Apply.
 type Ack struct {
