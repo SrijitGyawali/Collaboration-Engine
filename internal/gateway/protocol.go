@@ -11,13 +11,15 @@ import (
 //
 // Client to server:
 //
-//	{"type":"join","doc":"demo"}            first message, exactly once
+//	{"type":"join","doc":"demo","lastSeq":41}  first message, exactly once; lastSeq
+//	                                            (optional) is the last seq the client has
 //	{"type":"ops","ops":[<wire op>, ...]}   local edits
 //
 // Server to client:
 //
 //	{"type":"remote","ops":[{"seq":7,"op":<wire op>}, ...]}  history and others' edits
 //	{"type":"joined","doc":"demo","seq":7}  catch-up done; seq is the last one sent
+//	                                        (or lastSeq if nothing was missed; 0 is omitted)
 //	{"type":"ack","acks":[{"opId":"3@alice","seq":8}, ...]}  one per op sent, in order
 //
 // When the server closes a connection, the WebSocket close reason says why.
@@ -36,9 +38,12 @@ const (
 // clientMessage is any message a client sends; fields unused by its type are
 // empty.
 type clientMessage struct {
-	Type string    `json:"type"`
-	Doc  string    `json:"doc,omitempty"`
-	Ops  []wire.Op `json:"ops,omitempty"`
+	Type string `json:"type"`
+	Doc  string `json:"doc,omitempty"`
+	// LastSeq is, on join, the last sequence number the client already has;
+	// catch-up sends only what comes after it. 0 means "nothing yet".
+	LastSeq int64     `json:"lastSeq,omitempty"`
+	Ops     []wire.Op `json:"ops,omitempty"`
 }
 
 // serverMessage is any message the server sends.

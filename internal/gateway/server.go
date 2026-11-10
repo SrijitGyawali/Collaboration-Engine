@@ -138,7 +138,7 @@ func (s *Server) serve(ctx context.Context, conn *websocket.Conn) {
 		closeForReadError(conn, err, "expected a join message")
 		return
 	}
-	if msg.Type != typeJoin || !store.ValidDocumentID(msg.Doc) {
+	if msg.Type != typeJoin || !store.ValidDocumentID(msg.Doc) || msg.LastSeq < 0 {
 		closeWith(conn, websocket.StatusPolicyViolation, "first message must be join with a valid document name")
 		return
 	}
@@ -161,7 +161,8 @@ func (s *Server) serve(ctx context.Context, conn *websocket.Conn) {
 	s.hub.join(doc, c)
 	defer s.hub.leave(doc, c)
 
-	last, err := s.catchUp(ctx, c, doc, 0)
+	// A reconnecting client already has everything up to LastSeq.
+	last, err := s.catchUp(ctx, c, doc, msg.LastSeq)
 	if err != nil {
 		s.fail(conn, "could not load the document", err)
 		return

@@ -15,6 +15,7 @@ import (
 	"github.com/coder/websocket"
 
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/crdt"
+	"github.com/SrijitGyawali/Collaboration-Engine/internal/store"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/store/memstore"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/syncsvc"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/wire"
@@ -64,6 +65,9 @@ func dial(t *testing.T, url string) *testClient {
 		t.Fatalf("dial: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.CloseNow() })
+	// A page of history can be far larger than the library's 32 KiB
+	// default; browsers have no such limit.
+	conn.SetReadLimit(8 << 20)
 	return &testClient{t: t, conn: conn}
 }
 
@@ -105,7 +109,13 @@ func (c *testClient) tryNext(wait time.Duration) (serverMessage, error) {
 // join joins doc and returns the history received and the joined seq.
 func (c *testClient) join(doc string) ([]seqOp, int64) {
 	c.t.Helper()
-	c.send(map[string]any{"type": "join", "doc": doc})
+	return c.joinWith(map[string]any{"type": "join", "doc": doc})
+}
+
+// joinWith sends a custom join message and collects the catch-up.
+func (c *testClient) joinWith(msg map[string]any) ([]seqOp, int64) {
+	c.t.Helper()
+	c.send(msg)
 	var history []seqOp
 	for {
 		msg := c.next()
@@ -227,11 +237,66 @@ func TestRoomsAreSeparate(t *testing.T) {
 	}
 }
 
+// A reconnecting client sends the last seq it has and gets only the rest.
+func TestCatchUpFromLastSeq(t *testing.T) {
+	url := startServer(t, nil)
+	alice := dial(t, url)
+	alice.join("doc")
+	alice.send(map[string]any{"type": "ops", "ops": typed("alice", "hello")})
+	alice.next()
+
+	history, seq := dial(t, url).joinWith(map[string]any{"type": "join", "doc": "doc", "lastSeq": 3})
+	if len(history) != 2 || history[0].Seq != 4 || history[1].Seq != 5 || seq != 5 {
+		t.Errorf("after 3: history %+v, seq %d", history, seq)
+	}
+
+	history, seq = dial(t, url).joinWith(map[string]any{"type": "join", "doc": "doc", "lastSeq": 5})
+	if len(history) != 0 || seq != 5 {
+		t.Errorf("up to date: history %+v, seq %d", history, seq)
+	}
+}
+
+// History longer than one page arrives as several messages, in order.
+func TestCatchUpPagesThroughLongHistory(t *testing.T) {
+	svc := syncsvc.New(memstore.New(), quietLog(), syncsvc.Options{})
+	t.Cleanup(svc.Close)
+	ops := typed("alice", strings.Repeat("x", store.MaxPage+5))
+	for start := 0; start < len(ops); start += syncsvc.MaxBatch {
+		if _, err := svc.Apply(t.Context(), "doc", ops[start:min(start+syncsvc.MaxBatch, len(ops))]); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	c := dial(t, startServer(t, svc))
+	c.send(map[string]any{"type": "join", "doc": "doc"})
+	pages, next := 0, int64(1)
+	for {
+		msg := c.next()
+		if msg.Type == typeJoined {
+			if msg.Seq != int64(len(ops)) {
+				t.Errorf("joined seq %d, want %d", msg.Seq, len(ops))
+			}
+			break
+		}
+		pages++
+		for _, op := range msg.Ops {
+			if op.Seq != next {
+				t.Fatalf("got seq %d, want %d", op.Seq, next)
+			}
+			next++
+		}
+	}
+	if pages != 2 {
+		t.Errorf("history came in %d messages, want 2", pages)
+	}
+}
+
 func TestFirstMessageMustBeJoin(t *testing.T) {
 	url := startServer(t, nil)
 	for name, msg := range map[string]any{
 		"ops before join":  map[string]any{"type": "ops"},
 		"invalid document": map[string]any{"type": "join", "doc": "has space"},
+		"negative lastSeq": map[string]any{"type": "join", "doc": "doc", "lastSeq": -1},
 	} {
 		c := dial(t, url)
 		c.send(msg)
