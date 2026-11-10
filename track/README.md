@@ -14,6 +14,7 @@ One file per working day: what was planned, what got built, what was learned, an
 | 7 | Nov 7 | Editor binding, tab-to-tab sync, IME support | [2026-11-07](2026-11-07.md) |
 | 8 | Nov 8 (finished Nov 9) | PostgreSQL data layer, transactional outbox | [2026-11-08](2026-11-08.md) |
 | 9 | Nov 9 | Sync service actors, WebSocket gateway | [2026-11-09](2026-11-09.md) |
+| 10 | Nov 10 | PostgreSQL persistence, catch-up from lastSeq, guest identity | [2026-11-10](2026-11-10.md) |
 
 ## Weekly goals
 
