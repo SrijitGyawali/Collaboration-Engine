@@ -143,6 +143,11 @@ func (s *Server) serve(ctx context.Context, conn *websocket.Conn) {
 		return
 	}
 	doc := msg.Doc
+	you, err := newIdentity(msg.Replica, msg.Name)
+	if err != nil {
+		closeWith(conn, websocket.StatusPolicyViolation, err.Error())
+		return
+	}
 
 	ctx, cancelConn := context.WithCancel(ctx)
 	defer cancelConn()
@@ -167,7 +172,7 @@ func (s *Server) serve(ctx context.Context, conn *websocket.Conn) {
 		s.fail(conn, "could not load the document", err)
 		return
 	}
-	if c.push(ctx, encode(serverMessage{Type: typeJoined, Doc: doc, Seq: last})) != nil {
+	if c.push(ctx, encode(serverMessage{Type: typeJoined, Doc: doc, Seq: last, You: &you})) != nil {
 		return
 	}
 
@@ -179,6 +184,12 @@ func (s *Server) serve(ctx context.Context, conn *websocket.Conn) {
 		}
 		if msg.Type != typeOps {
 			closeWith(conn, websocket.StatusPolicyViolation, "unexpected message type "+msg.Type)
+			return
+		}
+		// A client may only send edits made by its own replica; anything
+		// else would let it forge edits in someone else's name.
+		if !ownedBy(msg.Ops, you.Replica) {
+			closeWith(conn, websocket.StatusPolicyViolation, "ops must be made by your own replica")
 			return
 		}
 		if err := s.handleOps(ctx, c, doc, msg.Ops); err != nil {
@@ -240,6 +251,16 @@ func (s *Server) handleOps(ctx context.Context, c *client, doc string, ops []wir
 		s.hub.broadcast(doc, c, encode(serverMessage{Type: typeRemote, Ops: fresh}))
 	}
 	return nil
+}
+
+// ownedBy reports whether every op was created by replica.
+func ownedBy(ops []wire.Op, replica string) bool {
+	for _, op := range ops {
+		if op.ID.Replica != replica {
+			return false
+		}
+	}
+	return true
 }
 
 // write sends queued messages until ctx ends or a write fails.

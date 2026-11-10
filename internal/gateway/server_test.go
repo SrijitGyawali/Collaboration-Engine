@@ -106,10 +106,11 @@ func (c *testClient) tryNext(wait time.Duration) (serverMessage, error) {
 	return msg, nil
 }
 
-// join joins doc and returns the history received and the joined seq.
-func (c *testClient) join(doc string) ([]seqOp, int64) {
+// join joins doc as replica and returns the history received and the joined
+// seq.
+func (c *testClient) join(doc, replica string) ([]seqOp, int64) {
 	c.t.Helper()
-	return c.joinWith(map[string]any{"type": "join", "doc": doc})
+	return c.joinWith(map[string]any{"type": "join", "doc": doc, "replica": replica})
 }
 
 // joinWith sends a custom join message and collects the catch-up.
@@ -154,7 +155,7 @@ func typed(replica, text string) []wire.Op {
 
 func TestJoinAnEmptyDocument(t *testing.T) {
 	c := dial(t, startServer(t, nil))
-	history, seq := c.join("doc")
+	history, seq := c.join("doc", "carol")
 	if len(history) != 0 || seq != 0 {
 		t.Errorf("history %v, seq %d", history, seq)
 	}
@@ -163,8 +164,8 @@ func TestJoinAnEmptyDocument(t *testing.T) {
 func TestOpsAreAckedAndBroadcast(t *testing.T) {
 	url := startServer(t, nil)
 	alice, bob := dial(t, url), dial(t, url)
-	alice.join("doc")
-	bob.join("doc")
+	alice.join("doc", "alice")
+	bob.join("doc", "bob")
 
 	alice.send(map[string]any{"type": "ops", "ops": typed("alice", "hi")})
 
@@ -181,11 +182,11 @@ func TestOpsAreAckedAndBroadcast(t *testing.T) {
 func TestLateJoinerGetsHistory(t *testing.T) {
 	url := startServer(t, nil)
 	alice := dial(t, url)
-	alice.join("doc")
+	alice.join("doc", "alice")
 	alice.send(map[string]any{"type": "ops", "ops": typed("alice", "hello")})
 	alice.next() // ack
 
-	history, seq := dial(t, url).join("doc")
+	history, seq := dial(t, url).join("doc", "dave")
 	if len(history) != 5 || seq != 5 || history[4].Op.Value != "o" {
 		t.Errorf("history %+v, seq %d", history, seq)
 	}
@@ -196,8 +197,8 @@ func TestLateJoinerGetsHistory(t *testing.T) {
 func TestDuplicatesAndRejectionsAreNotBroadcast(t *testing.T) {
 	url := startServer(t, nil)
 	alice, bob := dial(t, url), dial(t, url)
-	alice.join("doc")
-	bob.join("doc")
+	alice.join("doc", "alice")
+	bob.join("doc", "bob")
 	ops := typed("alice", "ab")
 
 	alice.send(map[string]any{"type": "ops", "ops": ops[:1]})
@@ -226,8 +227,8 @@ func TestDuplicatesAndRejectionsAreNotBroadcast(t *testing.T) {
 func TestRoomsAreSeparate(t *testing.T) {
 	url := startServer(t, nil)
 	alice, other := dial(t, url), dial(t, url)
-	alice.join("one")
-	other.join("two")
+	alice.join("one", "alice")
+	other.join("two", "other")
 
 	alice.send(map[string]any{"type": "ops", "ops": typed("alice", "x")})
 	alice.next()
@@ -241,16 +242,16 @@ func TestRoomsAreSeparate(t *testing.T) {
 func TestCatchUpFromLastSeq(t *testing.T) {
 	url := startServer(t, nil)
 	alice := dial(t, url)
-	alice.join("doc")
+	alice.join("doc", "alice")
 	alice.send(map[string]any{"type": "ops", "ops": typed("alice", "hello")})
 	alice.next()
 
-	history, seq := dial(t, url).joinWith(map[string]any{"type": "join", "doc": "doc", "lastSeq": 3})
+	history, seq := dial(t, url).joinWith(map[string]any{"type": "join", "doc": "doc", "replica": "erin", "lastSeq": 3})
 	if len(history) != 2 || history[0].Seq != 4 || history[1].Seq != 5 || seq != 5 {
 		t.Errorf("after 3: history %+v, seq %d", history, seq)
 	}
 
-	history, seq = dial(t, url).joinWith(map[string]any{"type": "join", "doc": "doc", "lastSeq": 5})
+	history, seq = dial(t, url).joinWith(map[string]any{"type": "join", "doc": "doc", "replica": "erin", "lastSeq": 5})
 	if len(history) != 0 || seq != 5 {
 		t.Errorf("up to date: history %+v, seq %d", history, seq)
 	}
@@ -268,7 +269,7 @@ func TestCatchUpPagesThroughLongHistory(t *testing.T) {
 	}
 
 	c := dial(t, startServer(t, svc))
-	c.send(map[string]any{"type": "join", "doc": "doc"})
+	c.send(map[string]any{"type": "join", "doc": "doc", "replica": "carol"})
 	pages, next := 0, int64(1)
 	for {
 		msg := c.next()
@@ -291,12 +292,42 @@ func TestCatchUpPagesThroughLongHistory(t *testing.T) {
 	}
 }
 
+func TestJoinedSaysWhoYouAre(t *testing.T) {
+	c := dial(t, startServer(t, nil))
+	c.send(map[string]any{"type": "join", "doc": "doc", "replica": "k3j9x2", "name": " Ann "})
+	msg := c.next()
+	if msg.Type != typeJoined || msg.You == nil {
+		t.Fatalf("got %+v", msg)
+	}
+	if msg.You.Replica != "k3j9x2" || msg.You.Name != "Ann" || msg.You.Color == "" {
+		t.Errorf("you = %+v", *msg.You)
+	}
+}
+
+// A client cannot send edits in another replica's name.
+func TestOpsFromAnotherReplicaAreRefused(t *testing.T) {
+	url := startServer(t, nil)
+	mallory, bob := dial(t, url), dial(t, url)
+	mallory.join("doc", "mallory")
+	bob.join("doc", "bob")
+
+	mallory.send(map[string]any{"type": "ops", "ops": typed("alice", "forged")})
+	if got := mallory.closeStatus(); got != websocket.StatusPolicyViolation {
+		t.Errorf("close status %v, want policy violation", got)
+	}
+	if msg, err := bob.tryNext(200 * time.Millisecond); err == nil {
+		t.Errorf("bob received forged edits: %+v", msg)
+	}
+}
+
 func TestFirstMessageMustBeJoin(t *testing.T) {
 	url := startServer(t, nil)
 	for name, msg := range map[string]any{
 		"ops before join":  map[string]any{"type": "ops"},
-		"invalid document": map[string]any{"type": "join", "doc": "has space"},
-		"negative lastSeq": map[string]any{"type": "join", "doc": "doc", "lastSeq": -1},
+		"invalid document": map[string]any{"type": "join", "doc": "has space", "replica": "carol"},
+		"negative lastSeq": map[string]any{"type": "join", "doc": "doc", "replica": "carol", "lastSeq": -1},
+		"missing replica":  map[string]any{"type": "join", "doc": "doc"},
+		"invalid replica":  map[string]any{"type": "join", "doc": "doc", "replica": "has space"},
 	} {
 		c := dial(t, url)
 		c.send(msg)
@@ -308,7 +339,7 @@ func TestFirstMessageMustBeJoin(t *testing.T) {
 
 func TestMalformedMessagesCloseTheConnection(t *testing.T) {
 	c := dial(t, startServer(t, nil))
-	c.join("doc")
+	c.join("doc", "carol")
 	if err := c.conn.Write(t.Context(), websocket.MessageText, []byte("{not json")); err != nil {
 		t.Fatal(err)
 	}
@@ -357,8 +388,8 @@ func (failingBackend) OperationsSince(context.Context, string, int64, int) ([]sy
 // resends them.
 func TestBackendFailureAsksTheClientToRetry(t *testing.T) {
 	c := dial(t, startServer(t, failingBackend{}))
-	c.join("doc")
-	c.send(map[string]any{"type": "ops", "ops": typed("alice", "x")})
+	c.join("doc", "carol")
+	c.send(map[string]any{"type": "ops", "ops": typed("carol", "x")})
 	if got := c.closeStatus(); got != websocket.StatusTryAgainLater {
 		t.Errorf("close status %v, want try again later", got)
 	}
@@ -372,7 +403,7 @@ func TestCloseDisconnectsClients(t *testing.T) {
 	defer ts.Close()
 
 	c := dial(t, "ws"+strings.TrimPrefix(ts.URL, "http"))
-	c.join("doc")
+	c.join("doc", "carol")
 	go srv.Close()
 	if got := c.closeStatus(); got != websocket.StatusGoingAway {
 		t.Errorf("close status %v, want going away", got)
