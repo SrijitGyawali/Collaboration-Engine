@@ -42,7 +42,7 @@ async function DocumentEditor({ searchParams }: { searchParams: SearchParams }) 
         <a href={`/editor?doc=${docId}`} target="_blank" rel="noopener">
           this page in another tab
         </a>{" "}
-        and type in both. Edits sync between tabs of this browser through the CRDT; the server comes next week.
+        and type in both. Edits merge through the CRDT, and sync through the server when one is configured.
       </p>
       <CollabEditor docId={docId} />
     </>
