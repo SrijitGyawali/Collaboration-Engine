@@ -1,6 +1,5 @@
 # Build output
 /bin/
-/gen/
 *.exe
 *.wasm
 coverage.out
