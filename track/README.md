@@ -16,6 +16,7 @@ One file per working day: what was planned, what got built, what was learned, an
 | 9 | Nov 9 | Sync service actors, WebSocket gateway | [2026-11-09](2026-11-09.md) |
 | 10 | Nov 10 | PostgreSQL persistence, catch-up from lastSeq, guest identity | [2026-11-10](2026-11-10.md) |
 | 11 | Nov 11 | Browser editing through the gateway, unacked queue | [2026-11-11](2026-11-11.md) |
+| 12 | Nov 12 | gRPC contract, generated code, sync service over gRPC | [2026-11-12](2026-11-12.md) |
 
 ## Weekly goals
 
