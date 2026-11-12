@@ -7,8 +7,11 @@ COMPOSE  := docker compose -f deploy/docker-compose.yml
 .DEFAULT_GOAL := help
 
 FUZZTIME ?= 30s
+# buf runs at a pinned version through go run: nothing to install. The protoc
+# plugins it calls are pinned as tools in go.mod (see buf.gen.yaml).
+BUF      := $(GO) run github.com/bufbuild/buf/cmd/buf@v1.75.0
 
-.PHONY: help build wasm web-wasm web-install web-test web-dev test test-short test-race cover bench fuzz lint fmt proto up migrate down reset logs clean
+.PHONY: help build wasm web-wasm web-install web-test web-dev test test-short test-race cover bench fuzz lint fmt proto proto-check up migrate down reset logs clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-10s %s\n", $$1, $$2}'
@@ -62,9 +65,12 @@ lint: ## Run golangci-lint
 fmt: ## Format Go code
 	golangci-lint fmt ./...
 
-proto: ## Lint .proto files and generate Go code into gen/ (needs buf)
-	buf lint
-	buf generate
+proto: ## Lint the .proto files and regenerate the Go code in gen/
+	$(BUF) lint
+	$(BUF) generate
+
+proto-check: proto ## Fail if gen/ is not what the .proto files produce
+	git diff --exit-code -- gen/
 
 up: ## Start Postgres, Redis and Redpanda, then apply migrations
 	$(COMPOSE) up -d --wait postgres redis redpanda
