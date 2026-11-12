@@ -46,6 +46,19 @@ jobs:
         with:
           version: v2.14
 
+  proto:
+    name: gRPC contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+      # buf lint, then regenerate gen/ and fail if it differs from what is
+      # committed: someone changed sync.proto without running make proto.
+      - name: Lint and check generated code
+        run: make proto-check
+
   web:
     name: Web app
     runs-on: ubuntu-latest
