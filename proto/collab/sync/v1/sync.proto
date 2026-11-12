@@ -12,11 +12,13 @@ service SyncService {
   // original ack instead of applying it twice.
   rpc ApplyOperations(ApplyOperationsRequest) returns (ApplyOperationsResponse);
 
-  // GetOperationsSince streams every operation of a document after a
-  // sequence number, in order.
-  rpc GetOperationsSince(GetOperationsSinceRequest) returns (stream Operation);
+  // GetOperationsSince streams a document's stored operations after a
+  // sequence number, in order, a page per message.
+  rpc GetOperationsSince(GetOperationsSinceRequest) returns (stream GetOperationsSinceResponse);
 
   // GetSnapshot returns the latest snapshot of a document for initial load.
+  // Not implemented yet (snapshots arrive with the Kafka workers): the server
+  // answers UNIMPLEMENTED.
   rpc GetSnapshot(GetSnapshotRequest) returns (GetSnapshotResponse);
 }
 
@@ -55,13 +57,22 @@ message Operation {
 
 message ApplyOperationsRequest {
   string doc_id = 1;
+  // The replica that made the operations, for logs.
   string client_id = 2;
+  // At most 1000 per call.
   repeated Operation operations = 3;
 }
 
+// Ack is the outcome of one operation, in the same position as in the request.
 message Ack {
   string op_id = 1;
+  // The operation's place in the document's history; 0 if rejected.
   int64 seq = 2;
+  // The operation was already stored; seq is the number it got then.
+  bool duplicate = 3;
+  // Why the operation was rejected, or empty. Rejected operations are not
+  // stored; the client should drop them.
+  string error = 4;
 }
 
 message ApplyOperationsResponse {
@@ -71,6 +82,13 @@ message ApplyOperationsResponse {
 message GetOperationsSinceRequest {
   string doc_id = 1;
   int64 after_seq = 2;
+  // The most operations to return; 0 means all of them.
+  int32 limit = 3;
+}
+
+message GetOperationsSinceResponse {
+  // A page of operations, each with its seq, oldest first.
+  repeated Operation operations = 1;
 }
 
 message GetSnapshotRequest {
