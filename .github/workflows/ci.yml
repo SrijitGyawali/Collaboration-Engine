@@ -59,6 +59,18 @@ jobs:
       - name: Lint and check generated code
         run: make proto-check
 
+  images:
+    name: Docker images
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        service: [sync, gateway]
+    steps:
+      - uses: actions/checkout@v5
+      # The same Dockerfile and build argument that docker compose uses.
+      - name: Build the ${{ matrix.service }} image
+        run: docker build --build-arg SERVICE=${{ matrix.service }} -t collab-${{ matrix.service }}:ci .
+
   web:
     name: Web app
     runs-on: ubuntu-latest
