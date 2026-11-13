@@ -2,5 +2,7 @@
 bin
 web
 deploy
+track
 *.md
 .env
+.claude
