@@ -60,6 +60,13 @@ flowchart TB
 
 If a Redis message is lost, the client notices a gap in `seq` and fetches the missing operations from PostgreSQL.
 
+**What runs today:** the browser, gateway, sync service and PostgreSQL parts work end to end (steps 1 to 5). Every edit also writes its outbox row. For now the gateway broadcasts to its own clients itself; Redis fan-out (step 6) and the Kafka relay and workers (step 7) are weeks 3 and 4.
+
+```text
+browser ──WebSocket──▶ gateway ──gRPC──▶ sync service ──▶ PostgreSQL (operations + outbox)
+ (CRDT in WebAssembly)  (no state)       (CRDT actor per document)
+```
+
 ## Tech stack
 
 | Component | Responsibility |
@@ -78,30 +85,32 @@ If a Redis message is lost, the client notices a gap in `seq` and fetches the mi
 
 ```text
 cmd/
-  gateway/        WebSocket server, gRPC client, Redis subscriber
-  sync/           gRPC server, CRDT document actors, PostgreSQL writes
+  gateway/        WebSocket server; sends every edit to sync over gRPC
+  sync/           gRPC server around the sync service; PostgreSQL writes
   outbox-relay/   Publishes outbox rows to Kafka
   worker/         Kafka consumers: snapshots, history
   crdt-wasm/      Exposes internal/crdt to the browser as WebAssembly
 internal/
   crdt/           The CRDT library (standard library only)
   wire/           JSON / JavaScript form of CRDT ops
-  store/          PostgreSQL repositories
+  store/          PostgreSQL repositories; memstore (in memory) and storetest (test database)
   pubsub/         Redis Pub/Sub and presence
   events/         Kafka producer and consumers
   gateway/        WebSocket protocol and rooms
-  syncsvc/        Sync service logic
+  syncsvc/        Sync service: one CRDT actor per document
+  syncrpc/        gRPC server and client for the sync service
   platform/       Config, logging, graceful shutdown
-proto/            gRPC contracts (buf)
+proto/            gRPC contract (buf)
+gen/              Go code generated from proto/ (make proto)
 migrations/       PostgreSQL schema (golang-migrate)
-deploy/           Docker Compose for local infrastructure
+deploy/           Docker Compose: infrastructure and the services
 web/              Next.js + TypeScript frontend; runs the Go CRDT as WebAssembly
 track/            Daily progress log
 ```
 
 ## Getting started
 
-**Prerequisites:** Go 1.26+, Docker, Make. Node.js 24+ for the frontend, and [buf](https://buf.build/docs/installation) to regenerate gRPC code.
+**Prerequisites:** Go 1.26+, Docker, Make, and Node.js 24+ for the frontend. Code generation tools are pinned and run through Go; nothing else to install.
 
 ```bash
 git clone https://github.com/SrijitGyawali/Collaboration-Engine.git
@@ -119,13 +128,24 @@ make web-install
 make web-dev   # http://localhost:3000
 ```
 
-Then open http://localhost:3000/editor in two tabs and type in both: edits merge through the CRDT. For now they sync between tabs of one browser; the server joins in week 2.
+Then open http://localhost:3000/editor in two tabs and type in both: edits merge through the CRDT, between tabs of one browser.
+
+### Run the whole system
+
+```bash
+make stack                              # infrastructure, migrations, sync service, gateway
+cp web/.env.example web/.env.local      # point the editor at ws://localhost:8080/ws
+make web-dev
+```
+
+Open http://localhost:3000/editor in two different browsers. Edits go through the gateway and the sync service into PostgreSQL. If the gateway is stopped, the editor keeps your edits and sends them when it reconnects.
 
 Run `make help` to list every target:
 
 | Target | What it does |
 | --- | --- |
 | `make up` / `make down` | Start or stop local infrastructure |
+| `make stack` | Build and start everything, including the sync service and gateway |
 | `make reset` | Stop infrastructure and delete its data |
 | `make migrate` | Apply database migrations |
 | `make build` | Build all services into `bin/` |
@@ -140,7 +160,7 @@ Run `make help` to list every target:
 | `make bench` | Run benchmarks |
 | `make fuzz` | Fuzz the CRDT (`FUZZTIME=30s` per target by default) |
 | `make lint` / `make fmt` | Lint or format Go code |
-| `make proto` | Lint and generate gRPC code |
+| `make proto` / `make proto-check` | Generate gRPC code / check it matches the contract |
 
 ## Key design decisions
 
@@ -160,7 +180,7 @@ Run `make help` to list every target:
 | --- | --- | --- |
 | 0 | Repository, tooling, CI | Done |
 | 1 | CRDT core with property tests; WebAssembly build | Done: CRDT with property and fuzz tests, running in the browser; shared editor syncing between tabs |
-| 2 | WebSocket + PostgreSQL; split into services over gRPC | In progress: data layer done and tested on real PostgreSQL; WebSocket server next |
+| 2 | WebSocket + PostgreSQL; split into services over gRPC | In progress: data layer, WebSocket gateway, sync service over gRPC, browser editing through the server and the Compose stack are done; the integration test is next |
 | 3 | Redis fan-out, presence, offline editing, failure tests | Not started |
 | 4 | Outbox + Kafka workers, metrics, load test, demo | Not started |
 
