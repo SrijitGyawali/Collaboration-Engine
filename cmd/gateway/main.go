@@ -1,10 +1,11 @@
 // Command gateway accepts browser WebSocket connections on /ws and keeps the
-// clients of each document in a room.
+// clients of each document in a room. Every edit goes to the sync service
+// over gRPC (SYNC_GRPC_TARGET, default localhost:9090), which validates and
+// stores it.
 //
-// For now the sync service runs inside the gateway process. Documents are
-// stored in PostgreSQL when DATABASE_URL is set, and in memory otherwise.
-// Gateways hold no document state of their own, so once the sync service
-// moves behind gRPC any number of them can run side by side.
+// A gateway holds no document state and no database connection of its own,
+// so any number of them can run side by side; broadcasting between gateways
+// comes with Redis.
 package main
 
 import (
@@ -15,28 +16,26 @@ import (
 
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/gateway"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/platform"
-	"github.com/SrijitGyawali/Collaboration-Engine/internal/store"
-	"github.com/SrijitGyawali/Collaboration-Engine/internal/store/memstore"
-	"github.com/SrijitGyawali/Collaboration-Engine/internal/syncsvc"
+	"github.com/SrijitGyawali/Collaboration-Engine/internal/syncrpc"
 )
 
 func main() {
 	platform.Main("gateway", func(ctx context.Context, log *slog.Logger) error {
-		st, closeStore, err := openStore(ctx, log)
+		target := platform.Env("SYNC_GRPC_TARGET", "localhost:9090")
+		backend, err := syncrpc.Dial(target)
 		if err != nil {
 			return err
 		}
-		defer closeStore()
-		svc := syncsvc.New(st, log, syncsvc.Options{})
-		defer svc.Close()
+		defer func() { _ = backend.Close() }()
+		log.Info("using the sync service", "target", target)
 
 		ws := gateway.NewServer(gateway.Config{
-			Backend:        svc,
+			Backend:        backend,
 			Log:            log,
 			AllowedOrigins: splitList(platform.Env("GATEWAY_ALLOWED_ORIGINS", "localhost:3000")),
 		})
 		// After the HTTP server stops: WebSocket connections are hijacked
-		// from it, so they are closed separately, before the service.
+		// from it, so they are closed separately, before the gRPC client.
 		defer ws.Close()
 
 		mux := http.NewServeMux()
@@ -44,22 +43,6 @@ func main() {
 		mux.Handle("GET /ws", ws)
 		return platform.ServeHTTP(ctx, log, platform.Env("GATEWAY_ADDR", ":8080"), mux)
 	})
-}
-
-// openStore connects to PostgreSQL at DATABASE_URL, or falls back to memory
-// when it is not set, saying loudly that nothing will be saved.
-func openStore(ctx context.Context, log *slog.Logger) (syncsvc.Store, func(), error) {
-	url := platform.Env("DATABASE_URL", "")
-	if url == "" {
-		log.Warn("DATABASE_URL is not set: documents are kept in memory and lost when the gateway stops")
-		return memstore.New(), func() {}, nil
-	}
-	st, err := store.Open(ctx, url)
-	if err != nil {
-		return nil, nil, err
-	}
-	log.Info("storing documents in PostgreSQL")
-	return st, st.Close, nil
 }
 
 // splitList splits a comma-separated setting, ignoring blanks.
