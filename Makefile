@@ -11,7 +11,7 @@ FUZZTIME ?= 30s
 # plugins it calls are pinned as tools in go.mod (see buf.gen.yaml).
 BUF      := $(GO) run github.com/bufbuild/buf/cmd/buf@v1.75.0
 
-.PHONY: help build wasm web-wasm web-install web-test web-dev test test-short test-race cover bench fuzz lint fmt proto proto-check up migrate down reset logs clean
+.PHONY: help build wasm web-wasm web-install web-test web-dev test test-short test-race cover bench fuzz lint fmt proto proto-check up stack migrate down reset logs clean
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "}; {printf "  %-10s %s\n", $$1, $$2}'
@@ -75,6 +75,10 @@ proto-check: proto ## Fail if gen/ is not what the .proto files produce
 up: ## Start Postgres, Redis and Redpanda, then apply migrations
 	$(COMPOSE) up -d --wait postgres redis redpanda
 	$(MAKE) migrate
+
+stack: ## Build and start everything: infrastructure, migrations, sync service, gateway
+	$(MAKE) up
+	$(COMPOSE) up -d --build sync gateway
 
 migrate: ## Apply database migrations
 	$(COMPOSE) run --rm migrate
