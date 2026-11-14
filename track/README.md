@@ -18,6 +18,7 @@ One file per working day: what was planned, what got built, what was learned, an
 | 11 | Nov 11 | Browser editing through the gateway, unacked queue | [2026-11-11](2026-11-11.md) |
 | 12 | Nov 12 | gRPC contract, generated code, sync service over gRPC | [2026-11-12](2026-11-12.md) |
 | 13 | Nov 13 | Gateway over gRPC, Docker images, full stack in Compose | [2026-11-13](2026-11-13.md) |
+| 14 | Nov 14 | CI fixed, integration tests through every layer, keepalive pings | [2026-11-14](2026-11-14.md) |
 
 ## Weekly goals
 
