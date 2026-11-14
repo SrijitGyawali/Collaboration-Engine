@@ -22,6 +22,11 @@ const (
 	sendQueue       = 256     // messages waiting for one client
 	joinTimeout     = 10 * time.Second
 	writeTimeout    = 10 * time.Second
+	// defaultPingInterval keeps connections alive through proxies, which
+	// often drop a WebSocket idle for about a minute, and finds clients
+	// that vanished without closing (a laptop going to sleep).
+	defaultPingInterval = 30 * time.Second
+	pingTimeout         = 10 * time.Second
 )
 
 // Backend is what the gateway needs from the sync service: store edits, and
@@ -42,6 +47,10 @@ type Config struct {
 	// visitor's browser. Clients that send no Origin (not browsers) are
 	// allowed.
 	AllowedOrigins []string
+	// PingInterval is how often each connection is pinged; a client that
+	// does not answer within 10 seconds (or within the interval, if shorter)
+	// is disconnected. 0 means 30 s.
+	PingInterval time.Duration
 }
 
 // Server accepts WebSocket connections and keeps each document's clients in
@@ -159,6 +168,7 @@ func (s *Server) serve(ctx context.Context, conn *websocket.Conn) {
 		})
 	})
 	go s.write(ctx, conn, c, cancelConn)
+	go s.keepAlive(ctx, conn, cancelConn)
 
 	// Join the room before reading history, so nothing committed in between
 	// is missed. An op may then arrive twice (live and in history); clients
@@ -261,6 +271,41 @@ func ownedBy(ops []wire.Op, replica string) bool {
 		}
 	}
 	return true
+}
+
+// keepAlive pings the client at a fixed interval until ctx ends. A client
+// that does not answer is gone (or unreachable) and is disconnected, so it
+// stops holding a place in its room. The pong is read by the connection's
+// read loop, which is always running.
+func (s *Server) keepAlive(ctx context.Context, conn *websocket.Conn, done context.CancelFunc) {
+	interval := s.cfg.PingInterval
+	if interval <= 0 {
+		interval = defaultPingInterval
+	}
+	// A pong slower than a whole interval is a failure anyway.
+	timeout := min(pingTimeout, interval)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			pctx, cancel := context.WithTimeout(ctx, timeout)
+			err := conn.Ping(pctx)
+			cancel()
+			if err != nil {
+				if ctx.Err() == nil {
+					// No closing handshake: it would wait for an
+					// answer from a client that has stopped answering.
+					s.cfg.Log.Debug("client stopped answering pings", "err", err)
+					_ = conn.CloseNow()
+				}
+				done()
+				return
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
 
 // write sends queued messages until ctx ends or a write fails.

@@ -373,6 +373,47 @@ func TestOtherWebsitesCannotConnect(t *testing.T) {
 	_ = conn.CloseNow()
 }
 
+// A client that answers pings stays connected; one that has gone silent (it
+// no longer reads, so it never answers) is removed from its room.
+func TestPingsKeepLiveClientsAndDropSilentOnes(t *testing.T) {
+	svc := syncsvc.New(memstore.New(), quietLog(), syncsvc.Options{})
+	t.Cleanup(svc.Close)
+	srv := NewServer(Config{Backend: svc, Log: quietLog(), PingInterval: 30 * time.Millisecond})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(func() {
+		srv.Close()
+		ts.Close()
+	})
+	url := "ws" + strings.TrimPrefix(ts.URL, "http")
+
+	live := dial(t, url)
+	live.join("doc", "live")
+	go func() {
+		for { // keep reading, so pings are answered
+			if _, err := live.tryNext(time.Minute); err != nil {
+				return
+			}
+		}
+	}()
+
+	silent := dial(t, url)
+	silent.join("doc", "silent")
+	// From here on silent never reads again, so its pongs are never sent.
+
+	deadline := time.Now().Add(5 * time.Second)
+	for srv.hub.size("doc") != 1 {
+		if time.Now().After(deadline) {
+			t.Fatalf("room has %d clients, want only the live one", srv.hub.size("doc"))
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	time.Sleep(200 * time.Millisecond) // several more ping rounds
+	if srv.hub.size("doc") != 1 {
+		t.Errorf("the live client was dropped")
+	}
+}
+
 // failingBackend stands in for a sync service whose database is down.
 type failingBackend struct{}
 
