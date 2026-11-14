@@ -16,11 +16,12 @@ Most collaborative-editor demos use a ready-made library such as Yjs. This one i
 - operations delivered out of order, twice, or after a reconnect still converge
 - an acknowledged edit is never lost, even if a gateway crashes
 
-The CRDT's guarantees and API are documented in [internal/crdt](internal/crdt/doc.go), with runnable examples in [example_test.go](internal/crdt/example_test.go). It is tested three ways:
+The CRDT's guarantees and API are documented in [internal/crdt](internal/crdt/doc.go), with runnable examples in [example_test.go](internal/crdt/example_test.go). It is tested four ways:
 
 - **Example tests** for specific cases, such as the classic same-position conflict.
 - **Property tests:** hundreds of random sessions with 3 to 5 replicas on a network that delays, reorders and repeats messages, checked for convergence, for edits landing where they were made, and against an independent reference model.
 - **Fuzz tests** (Go's built-in fuzzer) for malformed operations, fuzzer-chosen editing histories and position edits. These also run in CI on every push.
+- **Integration tests** run the services as they are deployed: WebSocket clients, the gateway, real gRPC, the sync service and PostgreSQL. They cover several people editing at once, reconnecting after a dropped connection, and the sync service restarting mid-edit.
 
 ## Architecture
 
@@ -180,7 +181,7 @@ Run `make help` to list every target:
 | --- | --- | --- |
 | 0 | Repository, tooling, CI | Done |
 | 1 | CRDT core with property tests; WebAssembly build | Done: CRDT with property and fuzz tests, running in the browser; shared editor syncing between tabs |
-| 2 | WebSocket + PostgreSQL; split into services over gRPC | In progress: data layer, WebSocket gateway, sync service over gRPC, browser editing through the server and the Compose stack are done; the integration test is next |
+| 2 | WebSocket + PostgreSQL; split into services over gRPC | Done: data layer, WebSocket gateway, sync service over gRPC, browser editing through the server, Compose stack, and integration tests through every layer |
 | 3 | Redis fan-out, presence, offline editing, failure tests | Not started |
 | 4 | Outbox + Kafka workers, metrics, load test, demo | Not started |
 
