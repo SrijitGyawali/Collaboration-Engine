@@ -51,9 +51,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
+      # buf needs Go 1.26.7 or newer, and setup-go turns off Go's automatic
+      # toolchain download, so install the newest 1.26 release here instead
+      # of the 1.26.0 that go.mod names.
       - uses: actions/setup-go@v6
         with:
-          go-version-file: go.mod
+          go-version: "1.26"
+          check-latest: true
       # buf lint, then regenerate gen/ and fail if it differs from what is
       # committed: someone changed sync.proto without running make proto.
       - name: Lint and check generated code
