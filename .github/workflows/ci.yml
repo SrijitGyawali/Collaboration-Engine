@@ -94,8 +94,10 @@ jobs:
       - run: npm ci
       - name: Lint
         run: npm run lint
+      # Generates Next.js route types (LayoutProps and friends) first; on a
+      # fresh checkout they do not exist until next dev, build or typegen.
       - name: Type-check
-        run: npx tsc --noEmit
+        run: npm run typecheck
       - name: Test the WebAssembly bridge
         run: npm test
       - name: Build
