@@ -10,13 +10,17 @@ import (
 // goroutine.
 type client struct {
 	send chan []byte
+	// replica is the replica this connection edits as. Edits arriving
+	// through pub/sub carry their author's replica, which is how the gateway
+	// knows not to echo them back to the connection that made them.
+	replica string
 	// kick closes the connection; it must be safe to call more than once and
 	// from any goroutine.
 	kick func(reason string)
 }
 
-func newClient(queue int, kick func(string)) *client {
-	return &client{send: make(chan []byte, queue), kick: kick}
+func newClient(queue int, replica string, kick func(string)) *client {
+	return &client{send: make(chan []byte, queue), replica: replica, kick: kick}
 }
 
 // offer queues msg without waiting. A client whose queue is full is not
@@ -77,6 +81,20 @@ func (h *hub) broadcast(doc string, from *client, msg []byte) {
 	defer h.mu.Unlock()
 	for c := range h.rooms[doc] {
 		if c != from {
+			c.offer(msg)
+		}
+	}
+}
+
+// broadcastExceptAuthor offers msg to every client in the room except those
+// editing as author. It is used for edits arriving through pub/sub, which
+// may come from any gateway: the author, if connected here, already had an
+// ack for them.
+func (h *hub) broadcastExceptAuthor(doc, author string, msg []byte) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for c := range h.rooms[doc] {
+		if c.replica != author {
 			c.offer(msg)
 		}
 	}
