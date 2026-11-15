@@ -58,10 +58,14 @@ services:
         SERVICE: sync
     environment:
       DATABASE_URL: postgres://collab:collab@postgres:5432/collab?sslmode=disable
+      # Committed edits are published here for the gateways.
+      REDIS_ADDR: redis:6379
       SYNC_GRPC_ADDR: ":9090"
       SYNC_HTTP_ADDR: ":8081"
     depends_on:
       postgres:
+        condition: service_healthy
+      redis:
         condition: service_healthy
     restart: unless-stopped
 
@@ -72,14 +76,19 @@ services:
         SERVICE: gateway
     environment:
       SYNC_GRPC_TARGET: sync:9090
+      # Where the gateway hears about edits made through other gateways.
+      REDIS_ADDR: redis:6379
       GATEWAY_ADDR: ":8080"
       GATEWAY_ALLOWED_ORIGINS: localhost:3000
     ports:
       - "127.0.0.1:${GATEWAY_PORT:-8080}:8080"
     # gRPC connects lazily and retries, so the gateway may start before the
-    # sync service is ready.
+    # sync service is ready. Redis is checked at startup, so it must be up.
     depends_on:
-      - sync
+      sync:
+        condition: service_started
+      redis:
+        condition: service_healthy
     restart: unless-stopped
 
   # One-shot: `make migrate`.
