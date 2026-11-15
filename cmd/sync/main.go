@@ -3,6 +3,11 @@
 // document's edits are applied to its CRDT and stored, with an outbox row for
 // Kafka, in PostgreSQL when DATABASE_URL is set and in memory otherwise.
 //
+// With REDIS_ADDR set, every newly stored batch is also published to Redis,
+// where each gateway subscribes to the documents its clients have open. That
+// is what lets several gateways serve one document; with a single gateway it
+// can be left unset.
+//
 // It also serves GET /healthz over HTTP (SYNC_HTTP_ADDR, default :8081) and
 // the standard gRPC health service, for load balancers and orchestrators.
 package main
@@ -20,6 +25,7 @@ import (
 	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/platform"
+	"github.com/SrijitGyawali/Collaboration-Engine/internal/pubsub"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/store"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/store/memstore"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/syncrpc"
@@ -35,7 +41,21 @@ func main() {
 			return err
 		}
 		defer closeStore()
-		svc := syncsvc.New(st, log, syncsvc.Options{})
+		var opts syncsvc.Options
+		if addr := platform.Env("REDIS_ADDR", ""); addr != "" {
+			r, err := pubsub.NewRedis(ctx, addr, log)
+			if err != nil {
+				return err
+			}
+			// Deferred before svc.Close, so it runs after: documents may
+			// still publish while they shut down.
+			defer func() { _ = r.Close() }()
+			opts.Publisher = r
+			log.Info("publishing committed edits to Redis", "addr", addr)
+		} else {
+			log.Warn("REDIS_ADDR is not set: edits are not published, so only a single gateway can be run")
+		}
+		svc := syncsvc.New(st, log, opts)
 		defer svc.Close()
 
 		g := grpc.NewServer()
