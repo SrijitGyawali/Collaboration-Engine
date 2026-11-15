@@ -1,5 +1,14 @@
-// Package pubsub wraps Redis for the live path: per-document Pub/Sub channels
-// that fan committed operations out to every gateway, and presence keys with
-// a TTL. Delivery is best effort; clients recover missed operations from the
-// operations log by sequence number.
+// Package pubsub carries committed operations from the sync service to every
+// gateway, so clients connected to different gateways see each other's edits.
+//
+// The sync service publishes one Message per stored batch, from the
+// document's actor, so a document's messages are published in sequence order.
+// Each gateway subscribes to a document while at least one of its clients has
+// it open, and forwards each message to those clients.
+//
+// Two implementations share one interface: Redis Pub/Sub for production, and
+// Memory for tests and single-process runs. Delivery is best effort in both:
+// a message published while a gateway is not subscribed, or while Redis is
+// unreachable, is not delivered later. That is safe because PostgreSQL holds
+// every operation, and clients catch up from it by sequence number.
 package pubsub
