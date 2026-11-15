@@ -34,13 +34,27 @@ func startServer(t *testing.T, backend Backend) string {
 		t.Cleanup(svc.Close)
 		backend = svc
 	}
-	srv := NewServer(Config{Backend: backend, Log: quietLog(), AllowedOrigins: []string{"app.example"}})
+	_, url := startGateway(t, Config{Backend: backend})
+	return url
+}
+
+// startGateway runs a gateway with cfg (a quiet log and the test origin
+// unless set) and returns it with its ws:// URL.
+func startGateway(t *testing.T, cfg Config) (*Server, string) {
+	t.Helper()
+	if cfg.Log == nil {
+		cfg.Log = quietLog()
+	}
+	if cfg.AllowedOrigins == nil {
+		cfg.AllowedOrigins = []string{"app.example"}
+	}
+	srv := NewServer(cfg)
 	ts := httptest.NewServer(srv)
 	t.Cleanup(func() {
 		srv.Close() // disconnect clients first; hijacked connections block ts.Close
 		ts.Close()
 	})
-	return "ws" + strings.TrimPrefix(ts.URL, "http")
+	return srv, "ws" + strings.TrimPrefix(ts.URL, "http")
 }
 
 // closeBody closes a handshake response body, if there is one.

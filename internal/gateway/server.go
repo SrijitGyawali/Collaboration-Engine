@@ -12,6 +12,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/SrijitGyawali/Collaboration-Engine/internal/pubsub"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/store"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/syncsvc"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/wire"
@@ -37,10 +38,29 @@ type Backend interface {
 	OperationsSince(ctx context.Context, docID string, afterSeq int64, limit int) ([]syncsvc.SeqOp, error)
 }
 
+// Subscriber delivers the operations committed to a document, whichever
+// gateway they were sent through. pubsub.Redis and pubsub.Memory implement
+// it. Subscribe must not return before delivery has started: the gateway
+// reads history right after, and relies on everything newer arriving live.
+type Subscriber interface {
+	Subscribe(docID string, fn func(pubsub.Message)) (unsubscribe func(), err error)
+}
+
 // Config configures a Server.
 type Config struct {
 	Backend Backend
 	Log     *slog.Logger
+	// Subscriber, if set, is where the gateway hears about committed edits:
+	// it subscribes to each document while anyone here has it open, and
+	// forwards what arrives to everyone but the edit's author. Use it when
+	// several gateways serve the same documents, with the sync service
+	// publishing to the same broker.
+	//
+	// If nil, the gateway only knows about edits sent through itself and
+	// broadcasts those directly. That is right for a single gateway, and
+	// wrong for two: each would only see its own clients' edits until they
+	// reconnect.
+	Subscriber Subscriber
 	// AllowedOrigins are the hosts (such as "localhost:3000") whose pages
 	// may connect. Browsers send an Origin header and the server refuses
 	// any other host, so other websites cannot open connections with a
@@ -65,12 +85,35 @@ type Server struct {
 	mu      sync.Mutex
 	conns   map[*websocket.Conn]struct{}
 	closing bool
+
+	// subs holds one pub/sub subscription per document someone here has
+	// open. Only used with a Subscriber.
+	subsMu sync.Mutex
+	subs   map[string]*subscription
+}
+
+// subscription is a document's pub/sub subscription, shared by the
+// document's connections on this gateway.
+type subscription struct {
+	users int
+	// ready is closed once Subscribe has returned; err and stop are set
+	// before that.
+	ready chan struct{}
+	err   error
+	stop  func()
 }
 
 // NewServer returns a Server.
 func NewServer(cfg Config) *Server {
 	base, stop := context.WithCancel(context.Background())
-	return &Server{cfg: cfg, hub: newHub(), base: base, stop: stop, conns: make(map[*websocket.Conn]struct{})}
+	return &Server{
+		cfg:   cfg,
+		hub:   newHub(),
+		base:  base,
+		stop:  stop,
+		conns: make(map[*websocket.Conn]struct{}),
+		subs:  make(map[string]*subscription),
+	}
 }
 
 // Close disconnects every client ("going away") and waits for their
@@ -161,7 +204,7 @@ func (s *Server) serve(ctx context.Context, conn *websocket.Conn) {
 	ctx, cancelConn := context.WithCancel(ctx)
 	defer cancelConn()
 	var once sync.Once
-	c := newClient(sendQueue, func(reason string) {
+	c := newClient(sendQueue, you.Replica, func(reason string) {
 		once.Do(func() {
 			go closeWith(conn, websocket.StatusTryAgainLater, reason)
 			cancelConn()
@@ -170,11 +213,19 @@ func (s *Server) serve(ctx context.Context, conn *websocket.Conn) {
 	go s.write(ctx, conn, c, cancelConn)
 	go s.keepAlive(ctx, conn, cancelConn)
 
-	// Join the room before reading history, so nothing committed in between
-	// is missed. An op may then arrive twice (live and in history); clients
-	// ignore what they already have.
+	// Join the room, and be subscribed to the document, before reading
+	// history, so nothing committed in between is missed. An op may then
+	// arrive twice (live and in history); clients ignore what they already
+	// have.
 	s.hub.join(doc, c)
 	defer s.hub.leave(doc, c)
+	if s.cfg.Subscriber != nil {
+		if err := s.subscribe(doc); err != nil {
+			s.fail(conn, "could not follow the document's edits", err)
+			return
+		}
+		defer s.unsubscribe(doc)
+	}
 
 	// A reconnecting client already has everything up to LastSeq.
 	last, err := s.catchUp(ctx, c, doc, msg.LastSeq)
@@ -234,8 +285,82 @@ func (s *Server) catchUp(ctx context.Context, c *client, doc string, afterSeq in
 	}
 }
 
-// handleOps stores a client's edits, acks them to the client, and broadcasts
-// the newly stored ones to the rest of the room.
+// subscribe makes sure the gateway is subscribed to doc, and counts one more
+// user of the subscription. The first user subscribes; later ones wait until
+// that has finished, because until then edits could still be missed.
+func (s *Server) subscribe(doc string) error {
+	s.subsMu.Lock()
+	sub, ok := s.subs[doc]
+	if ok {
+		sub.users++
+		s.subsMu.Unlock()
+		<-sub.ready
+		return sub.err
+	}
+	sub = &subscription{users: 1, ready: make(chan struct{})}
+	s.subs[doc] = sub
+	s.subsMu.Unlock()
+
+	// Subscribing can take a network round trip; other documents' joins
+	// must not wait for it, so it runs without the lock.
+	stop, err := s.cfg.Subscriber.Subscribe(doc, func(m pubsub.Message) { s.deliver(doc, m) })
+
+	s.subsMu.Lock()
+	sub.stop, sub.err = stop, err
+	if err != nil {
+		// Everyone waiting gets the error and gives up, so the next join
+		// starts afresh.
+		delete(s.subs, doc)
+	}
+	s.subsMu.Unlock()
+	close(sub.ready)
+	if err != nil {
+		return fmt.Errorf("gateway: subscribe to %q: %w", doc, err)
+	}
+	return nil
+}
+
+// unsubscribe counts one user less of doc's subscription, and unsubscribes
+// when it was the last. Only called after a successful subscribe.
+func (s *Server) unsubscribe(doc string) {
+	s.subsMu.Lock()
+	sub := s.subs[doc]
+	sub.users--
+	if sub.users > 0 {
+		s.subsMu.Unlock()
+		return
+	}
+	delete(s.subs, doc)
+	s.subsMu.Unlock()
+	// A join may subscribe again before this runs. That is fine: the broker
+	// counts handlers per document too, and only drops the subscription
+	// when none is left.
+	sub.stop()
+}
+
+// deliver forwards edits that arrived through pub/sub to the document's room
+// here, except to their author, who had them acknowledged instead.
+func (s *Server) deliver(doc string, m pubsub.Message) {
+	if m.DocID != doc || len(m.Ops) == 0 {
+		return
+	}
+	ops := make([]seqOp, len(m.Ops))
+	for i, op := range m.Ops {
+		ops[i] = seqOp{Seq: op.Seq, Op: op.Op}
+	}
+	s.hub.broadcastExceptAuthor(doc, m.Author, encode(serverMessage{Type: typeRemote, Ops: ops}))
+}
+
+// subscribed reports how many documents the gateway is subscribed to.
+func (s *Server) subscribed() int {
+	s.subsMu.Lock()
+	defer s.subsMu.Unlock()
+	return len(s.subs)
+}
+
+// handleOps stores a client's edits and acks them to the client. Without a
+// Subscriber it also broadcasts the newly stored ones to the rest of the
+// room; with one, they come back through pub/sub like everyone else's.
 func (s *Server) handleOps(ctx context.Context, c *client, doc string, ops []wire.Op) error {
 	if len(ops) == 0 {
 		return nil
@@ -257,7 +382,7 @@ func (s *Server) handleOps(ctx context.Context, c *client, doc string, ops []wir
 	if err := c.push(ctx, encode(serverMessage{Type: typeAck, Acks: reply})); err != nil {
 		return nil // the connection is closing anyway
 	}
-	if len(fresh) > 0 {
+	if len(fresh) > 0 && s.cfg.Subscriber == nil {
 		s.hub.broadcast(doc, c, encode(serverMessage{Type: typeRemote, Ops: fresh}))
 	}
 	return nil
