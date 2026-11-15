@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/SrijitGyawali/Collaboration-Engine/internal/pubsub"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/store"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/store/memstore"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/wire"
@@ -58,18 +59,31 @@ type SeqOp struct {
 	Op  wire.Op
 }
 
+// Publisher announces committed operations to the gateways; pubsub.Redis and
+// pubsub.Memory implement it.
+type Publisher interface {
+	Publish(ctx context.Context, msg pubsub.Message) error
+}
+
+// publishTimeout bounds one announcement, so a slow Redis cannot stall a
+// document's actor.
+const publishTimeout = 2 * time.Second
+
 // Options tunes a Service. The zero value means the defaults.
 type Options struct {
 	// IdleTimeout is how long a document stays loaded without requests.
 	IdleTimeout time.Duration
+	// Publisher, if set, is told about every newly stored batch of ops.
+	Publisher Publisher
 }
 
 // Service owns the live state of every open document. It is safe for
 // concurrent use.
 type Service struct {
-	store Store
-	log   *slog.Logger
-	idle  time.Duration
+	store     Store
+	log       *slog.Logger
+	idle      time.Duration
+	publisher Publisher
 
 	mu     sync.Mutex
 	actors map[string]*actor
@@ -84,11 +98,12 @@ func New(st Store, log *slog.Logger, opts Options) *Service {
 		opts.IdleTimeout = 5 * time.Minute
 	}
 	return &Service{
-		store:  st,
-		log:    log,
-		idle:   opts.IdleTimeout,
-		actors: make(map[string]*actor),
-		done:   make(chan struct{}),
+		store:     st,
+		log:       log,
+		idle:      opts.IdleTimeout,
+		publisher: opts.Publisher,
+		actors:    make(map[string]*actor),
+		done:      make(chan struct{}),
 	}
 }
 

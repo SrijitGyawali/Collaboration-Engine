@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/crdt"
+	"github.com/SrijitGyawali/Collaboration-Engine/internal/pubsub"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/store"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/wire"
 )
@@ -143,9 +144,49 @@ func (a *actor) apply(ctx context.Context, ops []wire.Op) ([]Ack, error) {
 		a.doc = nil
 		return nil, err
 	}
+	var fresh []freshOp
 	for j, st := range stored {
 		acks[positions[j]].Seq = st.Seq
 		acks[positions[j]].Duplicate = st.Duplicate
+		if !st.Duplicate {
+			fresh = append(fresh, freshOp{seq: st.Seq, op: ops[positions[j]]})
+		}
 	}
+	a.publish(ctx, fresh)
 	return acks, nil
+}
+
+type freshOp struct {
+	seq int64
+	op  wire.Op
+}
+
+// publish announces newly stored ops to the gateways, one message per run of
+// ops by the same author. It runs on the actor goroutine, so a document's
+// messages go out in sequence order.
+//
+// Fan-out is best effort: the ops are already stored, so a failed publish is
+// logged and the edit still succeeds; clients that miss the message catch up
+// by sequence number. It does not depend on the caller still waiting either:
+// a stored edit is announced even if the request that made it was cancelled.
+func (a *actor) publish(ctx context.Context, fresh []freshOp) {
+	pub := a.svc.publisher
+	if pub == nil || len(fresh) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), publishTimeout)
+	defer cancel()
+
+	for start := 0; start < len(fresh); {
+		author := fresh[start].op.ID.Replica
+		msg := pubsub.Message{DocID: a.docID, Author: author}
+		end := start
+		for ; end < len(fresh) && fresh[end].op.ID.Replica == author; end++ {
+			msg.Ops = append(msg.Ops, pubsub.SeqOp{Seq: fresh[end].seq, Op: fresh[end].op})
+		}
+		if err := pub.Publish(ctx, msg); err != nil {
+			a.svc.log.Warn("could not publish committed ops", "doc", a.docID, "ops", len(msg.Ops), "err", err)
+		}
+		start = end
+	}
 }
