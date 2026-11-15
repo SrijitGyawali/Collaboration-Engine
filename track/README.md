@@ -19,6 +19,7 @@ One file per working day: what was planned, what got built, what was learned, an
 | 12 | Nov 12 | gRPC contract, generated code, sync service over gRPC | [2026-11-12](2026-11-12.md) |
 | 13 | Nov 13 | Gateway over gRPC, Docker images, full stack in Compose | [2026-11-13](2026-11-13.md) |
 | 14 | Nov 14 | CI fixed, integration tests through every layer, keepalive pings | [2026-11-14](2026-11-14.md) |
+| 15 | Nov 15 | Redis Pub/Sub: the sync service publishes, gateways subscribe per document | [2026-11-15](2026-11-15.md) |
 
 ## Weekly goals
 
