@@ -13,6 +13,9 @@ services:
       - "127.0.0.1:${POSTGRES_PORT:-15432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
+    # Without this, a Docker restart brought back the application but not
+    # its database, and the sync service crash-looped.
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U collab -d collab"]
       interval: 2s
@@ -23,6 +26,7 @@ services:
     image: redis:8-alpine
     ports:
       - "127.0.0.1:${REDIS_PORT:-16379}:6379"
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 2s
@@ -43,6 +47,7 @@ services:
       - "127.0.0.1:19092:19092"
     volumes:
       - redpanda:/var/lib/redpanda/data
+    restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "rpk cluster health | grep -E 'Healthy:.+true'"]
       interval: 3s
