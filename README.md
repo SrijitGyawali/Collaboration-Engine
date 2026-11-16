@@ -21,7 +21,7 @@ The CRDT's guarantees and API are documented in [internal/crdt](internal/crdt/do
 - **Example tests** for specific cases, such as the classic same-position conflict.
 - **Property tests:** hundreds of random sessions with 3 to 5 replicas on a network that delays, reorders and repeats messages, checked for convergence, for edits landing where they were made, and against an independent reference model.
 - **Fuzz tests** (Go's built-in fuzzer) for malformed operations, fuzzer-chosen editing histories and position edits. These also run in CI on every push.
-- **Integration tests** run the services as they are deployed: WebSocket clients, the gateway, real gRPC, the sync service and PostgreSQL. They cover several people editing at once, reconnecting after a dropped connection, and the sync service restarting mid-edit.
+- **Integration tests** run the services as they are deployed: WebSocket clients, gateways, real gRPC, the sync service, PostgreSQL and Redis. They cover several people editing at once (on one gateway, and spread over two through Redis), reconnecting after a dropped connection, a gateway going away mid-edit, and the sync service restarting mid-edit.
 
 ## Architecture
 
@@ -59,14 +59,19 @@ flowchart TB
 6. The operation is published to Redis, and every gateway forwards it to its clients.
 7. The outbox relay publishes the event to Kafka, where workers build snapshots and history.
 
-If a Redis message is lost, the client notices a gap in `seq` and fetches the missing operations from PostgreSQL.
+Redis Pub/Sub is fast but can lose messages, for example while Redis restarts. PostgreSQL has every operation, so a client that missed some fetches them by `seq`.
 
-**What runs today:** the browser, gateway, sync service and PostgreSQL parts work end to end (steps 1 to 5). Every edit also writes its outbox row. For now the gateway broadcasts to its own clients itself; Redis fan-out (step 6) and the Kafka relay and workers (step 7) are weeks 3 and 4.
+**What runs today:** steps 1 to 6 work end to end, with two gateways behind a proxy in the Compose stack. Every edit also writes its outbox row; the Kafka relay and workers (step 7) are week 4. A client that misses Redis messages gets them back when it reconnects, from its last `seq`. Noticing the gap without a reconnect is not built yet.
 
 ```text
-browser ──WebSocket──▶ gateway ──gRPC──▶ sync service ──▶ PostgreSQL (operations + outbox)
- (CRDT in WebAssembly)  (no state)       (CRDT actor per document)
+                         ┌─▶ gateway A ─┐
+browser ──▶ proxy (Caddy)┤              ├──gRPC──▶ sync service ──▶ PostgreSQL (operations + outbox)
+ (CRDT in WebAssembly)   └─▶ gateway B ─┘        (CRDT actor per document)
+                               ▲     ▲                   │
+                               └─────┴──── Redis ◀───────┘ publish committed ops
 ```
+
+Each gateway subscribes to a document's Redis channel while any of its clients has the document open, and forwards each edit to everyone except its author, who already has an ack.
 
 ## Tech stack
 
@@ -86,8 +91,8 @@ browser ──WebSocket──▶ gateway ──gRPC──▶ sync service ──
 
 ```text
 cmd/
-  gateway/        WebSocket server; sends every edit to sync over gRPC
-  sync/           gRPC server around the sync service; PostgreSQL writes
+  gateway/        WebSocket server; sends every edit to sync over gRPC, hears edits back through Redis
+  sync/           gRPC server around the sync service; PostgreSQL writes, Redis publishes
   outbox-relay/   Publishes outbox rows to Kafka
   worker/         Kafka consumers: snapshots, history
   crdt-wasm/      Exposes internal/crdt to the browser as WebAssembly
@@ -95,7 +100,7 @@ internal/
   crdt/           The CRDT library (standard library only)
   wire/           JSON / JavaScript form of CRDT ops
   store/          PostgreSQL repositories; memstore (in memory) and storetest (test database)
-  pubsub/         Redis Pub/Sub and presence
+  pubsub/         Redis Pub/Sub fan-out (and an in-memory broker for tests); presence next
   events/         Kafka producer and consumers
   gateway/        WebSocket protocol and rooms
   syncsvc/        Sync service: one CRDT actor per document
@@ -104,7 +109,7 @@ internal/
 proto/            gRPC contract (buf)
 gen/              Go code generated from proto/ (make proto)
 migrations/       PostgreSQL schema (golang-migrate)
-deploy/           Docker Compose: infrastructure and the services
+deploy/           Docker Compose: infrastructure, the services, two gateways behind Caddy
 web/              Next.js + TypeScript frontend; runs the Go CRDT as WebAssembly
 track/            Daily progress log
 ```
@@ -134,19 +139,26 @@ Then open http://localhost:3000/editor in two tabs and type in both: edits merge
 ### Run the whole system
 
 ```bash
-make stack                              # infrastructure, migrations, sync service, gateway
-cp web/.env.example web/.env.local      # point the editor at ws://localhost:8080/ws
+make stack                              # infrastructure, migrations, sync service, two gateways, proxy
+cp web/.env.example web/.env.local      # point the editor at ws://localhost:8080/ws (the proxy)
 make web-dev
 ```
 
-Open http://localhost:3000/editor in two different browsers. Edits go through the gateway and the sync service into PostgreSQL. If the gateway is stopped, the editor keeps your edits and sends them when it reconnects.
+Open http://localhost:3000/editor in two different browsers. The proxy sends each connection to the gateway with fewer open connections, so two editors usually end up on different gateways and see each other's edits through Redis. If a gateway is stopped (`docker stop collab-engine-gateway-b-1`), its editors reconnect through the proxy to the other one and keep all their edits.
+
+To run the browser-side end-to-end tests against the stack, including two editors on different gateways on purpose (each gateway is also published on its own port):
+
+```bash
+cd web
+GATEWAY_URL=ws://localhost:8080/ws GATEWAY_URLS=ws://localhost:8091/ws,ws://localhost:8092/ws npx vitest run gateway.e2e
+```
 
 Run `make help` to list every target:
 
 | Target | What it does |
 | --- | --- |
 | `make up` / `make down` | Start or stop local infrastructure |
-| `make stack` | Build and start everything, including the sync service and gateway |
+| `make stack` | Build and start everything: the sync service, two gateways and the proxy |
 | `make reset` | Stop infrastructure and delete its data |
 | `make migrate` | Apply database migrations |
 | `make build` | Build all services into `bin/` |
@@ -182,7 +194,7 @@ Run `make help` to list every target:
 | 0 | Repository, tooling, CI | Done |
 | 1 | CRDT core with property tests; WebAssembly build | Done: CRDT with property and fuzz tests, running in the browser; shared editor syncing between tabs |
 | 2 | WebSocket + PostgreSQL; split into services over gRPC | Done: data layer, WebSocket gateway, sync service over gRPC, browser editing through the server, Compose stack, and integration tests through every layer |
-| 3 | Redis fan-out, presence, offline editing, failure tests | Not started |
+| 3 | Redis fan-out, presence, offline editing, failure tests | In progress: Redis fan-out between gateways, two gateways behind a proxy, cross-gateway tests |
 | 4 | Outbox + Kafka workers, metrics, load test, demo | Not started |
 
 Day-by-day notes are in [track/](track/README.md).
