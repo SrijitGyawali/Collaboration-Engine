@@ -1,6 +1,35 @@
-# Local infrastructure. Start with `make up` from the repo root.
+# Local infrastructure and the application. From the repo root, `make up`
+# starts the infrastructure; `make stack` builds and starts everything:
+#
+#   browser --> proxy :8080 --+--> gateway-a --+
+#                             +--> gateway-b --+--gRPC--> sync --> postgres
+#                                     ^    ^                |
+#                                     +----+----- redis <---+  committed edits
+#
 # Credentials here are for local development only.
 name: collab-engine
+
+# The two gateways are identical apart from their name and debug port.
+x-gateway: &gateway
+  build:
+    context: ..
+    args:
+      SERVICE: gateway
+  image: collab-engine-gateway
+  environment:
+    SYNC_GRPC_TARGET: sync:9090
+    # Where each gateway hears about edits made through the other one.
+    REDIS_ADDR: redis:6379
+    GATEWAY_ADDR: ":8080"
+    GATEWAY_ALLOWED_ORIGINS: localhost:3000
+  # gRPC connects lazily and retries, so a gateway may start before the sync
+  # service is ready. Redis is checked at startup, so it must be up.
+  depends_on:
+    sync:
+      condition: service_started
+    redis:
+      condition: service_healthy
+  restart: unless-stopped
 
 services:
   postgres:
@@ -54,8 +83,7 @@ services:
       timeout: 5s
       retries: 40
 
-  # The application, built from this repository. `make stack` builds and
-  # starts it with everything above; `make up` starts only the infrastructure.
+  # The application, built from this repository.
   sync:
     build:
       context: ..
@@ -74,26 +102,33 @@ services:
         condition: service_healthy
     restart: unless-stopped
 
-  gateway:
-    build:
-      context: ..
-      args:
-        SERVICE: gateway
-    environment:
-      SYNC_GRPC_TARGET: sync:9090
-      # Where the gateway hears about edits made through other gateways.
-      REDIS_ADDR: redis:6379
-      GATEWAY_ADDR: ":8080"
-      GATEWAY_ALLOWED_ORIGINS: localhost:3000
+  # Each gateway is also published on its own port, so tests and demos can
+  # put two editors on different gateways on purpose. Browsers use the proxy.
+  gateway-a:
+    <<: *gateway
+    ports:
+      - "127.0.0.1:${GATEWAY_A_PORT:-8091}:8080"
+
+  gateway-b:
+    <<: *gateway
+    ports:
+      - "127.0.0.1:${GATEWAY_B_PORT:-8092}:8080"
+
+  # The one address browsers connect to; see Caddyfile.
+  proxy:
+    image: caddy:2.11.9-alpine
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
     ports:
       - "127.0.0.1:${GATEWAY_PORT:-8080}:8080"
-    # gRPC connects lazily and retries, so the gateway may start before the
-    # sync service is ready. Redis is checked at startup, so it must be up.
     depends_on:
-      sync:
-        condition: service_started
-      redis:
-        condition: service_healthy
+      - gateway-a
+      - gateway-b
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
     restart: unless-stopped
 
   # One-shot: `make migrate`.

@@ -76,9 +76,9 @@ up: ## Start Postgres, Redis and Redpanda, then apply migrations
 	$(COMPOSE) up -d --wait postgres redis redpanda
 	$(MAKE) migrate
 
-stack: ## Build and start everything: infrastructure, migrations, sync service, gateway
+stack: ## Build and start everything: infrastructure, migrations, sync service, two gateways, proxy
 	$(MAKE) up
-	$(COMPOSE) up -d --build sync gateway
+	$(COMPOSE) up -d --build --remove-orphans --wait sync gateway-a gateway-b proxy
 
 migrate: ## Apply database migrations
 	$(COMPOSE) run --rm migrate
