@@ -34,6 +34,7 @@ type client struct {
 	conn    *websocket.Conn
 	joined  chan struct{}
 	done    chan struct{}
+	dials   int // connections opened so far
 }
 
 func newClient(t *testing.T, url, docID, replica string) *client {
@@ -65,6 +66,7 @@ func (c *client) connect() {
 
 	c.mu.Lock()
 	c.conn = conn
+	c.dials++
 	c.joined = make(chan struct{})
 	c.done = make(chan struct{})
 	join := map[string]any{"type": "join", "doc": c.docID, "replica": c.replica, "lastSeq": c.last}
@@ -252,6 +254,24 @@ func (c *client) reconnect() {
 	c.t.Helper()
 	c.disconnect()
 	c.connect()
+}
+
+// moveTo reconnects to another gateway, as a browser does when the proxy
+// sends its new connection elsewhere.
+func (c *client) moveTo(url string) {
+	c.t.Helper()
+	c.disconnect()
+	c.mu.Lock()
+	c.url = url
+	c.mu.Unlock()
+	c.connect()
+}
+
+// connections reports how many connections the client has opened.
+func (c *client) connections() int {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.dials
 }
 
 // closedByServer waits until the server closes the connection.
