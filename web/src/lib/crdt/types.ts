@@ -57,6 +57,7 @@ export interface RawDocument {
   deleteRange(pos: number, count: number): BridgeResult<{ ops: WireOp[] }>;
   apply(op: WireOp): BridgeResult<{ status: ApplyStatus }>;
   positionOf(id: WireID): BridgeResult<Position>;
+  idAt(pos: number): BridgeResult<{ id: WireID }>;
   pendingCount(): number;
   free(): void;
 }

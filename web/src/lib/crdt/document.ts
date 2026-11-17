@@ -79,6 +79,15 @@ export class CRDTDocument {
     return unwrap(this.#doc().positionOf(id));
   }
 
+  /**
+   * The ID of the visible character at pos (0..length-1). IDs never change,
+   * so this is how a position is remembered while others edit: a cursor
+   * is sent as the ID of the character before it.
+   */
+  idAt(pos: number): WireID {
+    return unwrap(this.#doc().idAt(pos)).id;
+  }
+
   /** Ops received that are waiting for a character that has not arrived. */
   get pendingCount(): number {
     return this.#doc().pendingCount();

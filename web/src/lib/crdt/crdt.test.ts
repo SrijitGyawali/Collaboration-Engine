@@ -85,6 +85,18 @@ describe("remote edits", () => {
     expect(bob.positionOf(i.id)).toEqual({ pos: 1, visible: true });
   });
 
+  it("names the character at a position, and finds it again", () => {
+    const doc = crdt.newDocument("alice");
+    doc.insertText(0, "a👋c");
+    const id = doc.idAt(1);
+    expect(id.replica).toBe("alice");
+    expect(doc.positionOf(id)).toEqual({ pos: 1, visible: true });
+    doc.insertText(0, "xy");
+    expect(doc.positionOf(id)).toEqual({ pos: 3, visible: true });
+    expect(() => doc.idAt(5)).toThrow(CRDTError);
+    doc.free();
+  });
+
   it("reports where a deleted character was", () => {
     const alice = crdt.newDocument("alice");
     const ops = alice.insertText(0, "cart");

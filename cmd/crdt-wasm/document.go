@@ -19,6 +19,7 @@ import (
 //	deleteRange(pos, count) -> {ops: Op[]} | {error}
 //	apply(op)               -> {status: "applied"|"duplicate"|"pending"} | {error}
 //	positionOf(id)          -> {pos: number, visible: boolean} | {error}
+//	idAt(pos)               -> {id: ID} | {error}   the visible character at pos
 //	pendingCount()          -> number
 //	free()                  -> releases the Go callbacks
 //
@@ -104,6 +105,17 @@ func newDocument(_ js.Value, args []js.Value) any {
 			return errorResult(err)
 		}
 		return map[string]any{"pos": pos, "visible": visible}
+	})
+	method("idAt", func(_ js.Value, args []js.Value) any {
+		pos, err := argInt(args, 0, "pos")
+		if err != nil {
+			return errorResult(err)
+		}
+		id, err := doc.IDAt(pos)
+		if err != nil {
+			return errorResult(err)
+		}
+		return map[string]any{"id": wire.ID{Counter: id.Counter, Replica: id.Replica}.ToMap()}
 	})
 	method("pendingCount", func(js.Value, []js.Value) any {
 		return doc.PendingCount()
