@@ -73,6 +73,8 @@ browser ──▶ proxy (Caddy)┤              ├──gRPC──▶ sync serv
 
 Each gateway subscribes to a document's Redis channel while any of its clients has the document open, and forwards each edit to everyone except its author, who already has an ack.
 
+**Presence:** each gateway keeps its editors in a Redis hash per document (`collab:doc:<id>:presence`), one field per editor with its own 30 s TTL, and refreshes them every 10 s (a heartbeat). Joins, cursor moves and departures travel on the same channel as edits. An editor whose gateway crashes never says goodbye: its entry expires, and browsers drop a peer they have not heard from in 30 s.
+
 ## Tech stack
 
 | Component | Responsibility |
@@ -100,7 +102,8 @@ internal/
   crdt/           The CRDT library (standard library only)
   wire/           JSON / JavaScript form of CRDT ops
   store/          PostgreSQL repositories; memstore (in memory) and storetest (test database)
-  pubsub/         Redis Pub/Sub fan-out (and an in-memory broker for tests); presence next
+  pubsub/         Redis Pub/Sub fan-out (and an in-memory broker for tests)
+  presence/       Who has each document open, in Redis entries with a TTL
   events/         Kafka producer and consumers
   gateway/        WebSocket protocol and rooms
   syncsvc/        Sync service: one CRDT actor per document
@@ -145,6 +148,8 @@ make web-dev
 ```
 
 Open http://localhost:3000/editor in two different browsers. The proxy sends each connection to the gateway with fewer open connections, so two editors usually end up on different gateways and see each other's edits through Redis. If a gateway is stopped (`docker stop collab-engine-gateway-b-1`), its editors reconnect through the proxy to the other one and keep all their edits.
+
+Each editor sees who else is here, listed under the text, and their carets in their colour, with their name. A caret is sent as the ID of the character before it, so it stays on the same spot while others type.
 
 To run the browser-side end-to-end tests against the stack, including two editors on different gateways on purpose (each gateway is also published on its own port):
 
@@ -194,7 +199,7 @@ Run `make help` to list every target:
 | 0 | Repository, tooling, CI | Done |
 | 1 | CRDT core with property tests; WebAssembly build | Done: CRDT with property and fuzz tests, running in the browser; shared editor syncing between tabs |
 | 2 | WebSocket + PostgreSQL; split into services over gRPC | Done: data layer, WebSocket gateway, sync service over gRPC, browser editing through the server, Compose stack, and integration tests through every layer |
-| 3 | Redis fan-out, presence, offline editing, failure tests | In progress: Redis fan-out between gateways, two gateways behind a proxy, cross-gateway tests |
+| 3 | Redis fan-out, presence, offline editing, failure tests | In progress: Redis fan-out between gateways, two gateways behind a proxy, cross-gateway tests, presence and live cursors |
 | 4 | Outbox + Kafka workers, metrics, load test, demo | Not started |
 
 Day-by-day notes are in [track/](track/README.md).
