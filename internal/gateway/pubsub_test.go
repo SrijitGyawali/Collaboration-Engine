@@ -31,7 +31,7 @@ func startCluster(t *testing.T, gateways int) *cluster {
 	c.svc = syncsvc.New(memstore.New(), quietLog(), syncsvc.Options{Publisher: c.broker})
 	t.Cleanup(c.svc.Close) // registered first, so it runs after the gateways close
 	for range gateways {
-		srv, url := startGateway(t, Config{Backend: c.svc, Subscriber: c.broker})
+		srv, url := startGateway(t, Config{Backend: c.svc, Broker: c.broker})
 		c.srvs = append(c.srvs, srv)
 		c.urls = append(c.urls, url)
 	}
@@ -136,14 +136,18 @@ func TestOneSubscriptionPerOpenDocument(t *testing.T) {
 	})
 }
 
-// gatedSubscriber holds every Subscribe call until gate is closed.
-type gatedSubscriber struct {
+// gatedBroker holds every Subscribe call until gate is closed.
+type gatedBroker struct {
 	inner *pubsub.Memory
 	gate  chan struct{}
 	calls atomic.Int32
 }
 
-func (g *gatedSubscriber) Subscribe(doc string, fn func(pubsub.Message)) (func(), error) {
+func (g *gatedBroker) Publish(ctx context.Context, m pubsub.Message) error {
+	return g.inner.Publish(ctx, m)
+}
+
+func (g *gatedBroker) Subscribe(doc string, fn func(pubsub.Message)) (func(), error) {
 	g.calls.Add(1)
 	<-g.gate
 	return g.inner.Subscribe(doc, fn)
@@ -167,9 +171,9 @@ func TestJoinsWaitForTheSubscription(t *testing.T) {
 	broker := pubsub.NewMemory()
 	svc := syncsvc.New(memstore.New(), quietLog(), syncsvc.Options{Publisher: broker})
 	t.Cleanup(svc.Close)
-	sub := &gatedSubscriber{inner: broker, gate: make(chan struct{})}
+	sub := &gatedBroker{inner: broker, gate: make(chan struct{})}
 	backend := &countingBackend{Backend: svc}
-	srv, url := startGateway(t, Config{Backend: backend, Subscriber: sub})
+	srv, url := startGateway(t, Config{Backend: backend, Broker: sub})
 
 	first, second := dial(t, url), dial(t, url)
 	first.send(map[string]any{"type": "join", "doc": "doc", "replica": "first"})
@@ -195,9 +199,13 @@ func TestJoinsWaitForTheSubscription(t *testing.T) {
 	}
 }
 
-type failingSubscriber struct{}
+type failingBroker struct{}
 
-func (failingSubscriber) Subscribe(string, func(pubsub.Message)) (func(), error) {
+func (failingBroker) Publish(context.Context, pubsub.Message) error {
+	return errors.New("redis is down")
+}
+
+func (failingBroker) Subscribe(string, func(pubsub.Message)) (func(), error) {
 	return nil, errors.New("redis is down")
 }
 
@@ -206,7 +214,7 @@ func (failingSubscriber) Subscribe(string, func(pubsub.Message)) (func(), error)
 func TestSubscribeFailureAsksTheClientToRetry(t *testing.T) {
 	svc := syncsvc.New(memstore.New(), quietLog(), syncsvc.Options{})
 	t.Cleanup(svc.Close)
-	srv, url := startGateway(t, Config{Backend: svc, Subscriber: failingSubscriber{}})
+	srv, url := startGateway(t, Config{Backend: svc, Broker: failingBroker{}})
 	c := dial(t, url)
 	c.send(map[string]any{"type": "join", "doc": "doc", "replica": "alice"})
 	if code := c.closeStatus(); code != websocket.StatusTryAgainLater {

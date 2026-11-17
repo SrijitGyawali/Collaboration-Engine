@@ -41,10 +41,10 @@ func quietLog() *slog.Logger {
 }
 
 // broker is a pub/sub connection: the sync service publishes through one,
-// each gateway subscribes through its own.
+// each gateway subscribes (and publishes presence) through its own.
 type broker interface {
 	syncsvc.Publisher
-	gateway.Subscriber
+	gateway.Broker
 }
 
 // brokers returns a new pub/sub connection for one process.
@@ -128,7 +128,7 @@ func (s *system) startGateway() {
 	}
 	cfg := gateway.Config{Backend: backend, Log: quietLog()}
 	if s.brokers != nil {
-		cfg.Subscriber = s.brokers(s.t)
+		cfg.Broker = s.brokers(s.t)
 	}
 	gw := gateway.NewServer(cfg)
 	ts := httptest.NewServer(gw)

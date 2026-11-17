@@ -46,7 +46,7 @@ func main() {
 			// Closed after the WebSocket server (deferred before it), which
 			// unsubscribes as its connections end.
 			defer func() { _ = r.Close() }()
-			cfg.Subscriber = r
+			cfg.Broker = r
 			log.Info("following documents through Redis", "addr", addr)
 		} else {
 			log.Warn("REDIS_ADDR is not set: only edits sent through this gateway are broadcast, so run no more than one")

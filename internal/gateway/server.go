@@ -38,19 +38,22 @@ type Backend interface {
 	OperationsSince(ctx context.Context, docID string, afterSeq int64, limit int) ([]syncsvc.SeqOp, error)
 }
 
-// Subscriber delivers the operations committed to a document, whichever
-// gateway they were sent through. pubsub.Redis and pubsub.Memory implement
-// it. Subscribe must not return before delivery has started: the gateway
-// reads history right after, and relies on everything newer arriving live.
-type Subscriber interface {
+// Broker connects the gateways: through it a gateway hears about the
+// operations committed to a document, whichever gateway they were sent
+// through, and publishes its editors' presence for the others.
+// pubsub.Redis and pubsub.Memory implement it. Subscribe must not return
+// before delivery has started: the gateway reads history right after, and
+// relies on everything newer arriving live.
+type Broker interface {
 	Subscribe(docID string, fn func(pubsub.Message)) (unsubscribe func(), err error)
+	Publish(ctx context.Context, msg pubsub.Message) error
 }
 
 // Config configures a Server.
 type Config struct {
 	Backend Backend
 	Log     *slog.Logger
-	// Subscriber, if set, is where the gateway hears about committed edits:
+	// Broker, if set, is where the gateway hears about committed edits:
 	// it subscribes to each document while anyone here has it open, and
 	// forwards what arrives to everyone but the edit's author. Use it when
 	// several gateways serve the same documents, with the sync service
@@ -60,7 +63,7 @@ type Config struct {
 	// broadcasts those directly. That is right for a single gateway, and
 	// wrong for two: each would only see its own clients' edits until they
 	// reconnect.
-	Subscriber Subscriber
+	Broker Broker
 	// AllowedOrigins are the hosts (such as "localhost:3000") whose pages
 	// may connect. Browsers send an Origin header and the server refuses
 	// any other host, so other websites cannot open connections with a
@@ -87,7 +90,7 @@ type Server struct {
 	closing bool
 
 	// subs holds one pub/sub subscription per document someone here has
-	// open. Only used with a Subscriber.
+	// open. Only used with a Broker.
 	subsMu sync.Mutex
 	subs   map[string]*subscription
 }
@@ -219,7 +222,7 @@ func (s *Server) serve(ctx context.Context, conn *websocket.Conn) {
 	// have.
 	s.hub.join(doc, c)
 	defer s.hub.leave(doc, c)
-	if s.cfg.Subscriber != nil {
+	if s.cfg.Broker != nil {
 		if err := s.subscribe(doc); err != nil {
 			s.fail(conn, "could not follow the document's edits", err)
 			return
@@ -303,7 +306,7 @@ func (s *Server) subscribe(doc string) error {
 
 	// Subscribing can take a network round trip; other documents' joins
 	// must not wait for it, so it runs without the lock.
-	stop, err := s.cfg.Subscriber.Subscribe(doc, func(m pubsub.Message) { s.deliver(doc, m) })
+	stop, err := s.cfg.Broker.Subscribe(doc, func(m pubsub.Message) { s.deliver(doc, m) })
 
 	s.subsMu.Lock()
 	sub.stop, sub.err = stop, err
@@ -359,7 +362,7 @@ func (s *Server) subscribed() int {
 }
 
 // handleOps stores a client's edits and acks them to the client. Without a
-// Subscriber it also broadcasts the newly stored ones to the rest of the
+// Broker it also broadcasts the newly stored ones to the rest of the
 // room; with one, they come back through pub/sub like everyone else's.
 func (s *Server) handleOps(ctx context.Context, c *client, doc string, ops []wire.Op) error {
 	if len(ops) == 0 {
@@ -382,7 +385,7 @@ func (s *Server) handleOps(ctx context.Context, c *client, doc string, ops []wir
 	if err := c.push(ctx, encode(serverMessage{Type: typeAck, Acks: reply})); err != nil {
 		return nil // the connection is closing anyway
 	}
-	if len(fresh) > 0 && s.cfg.Subscriber == nil {
+	if len(fresh) > 0 && s.cfg.Broker == nil {
 		s.hub.broadcast(doc, c, encode(serverMessage{Type: typeRemote, Ops: fresh}))
 	}
 	return nil
