@@ -124,3 +124,20 @@ func TestNewRedisFailsFastWithoutRedis(t *testing.T) {
 		t.Error("NewRedis succeeded with nothing listening")
 	}
 }
+
+// A presence update travels as the bytes the gateway encoded, untouched.
+func TestRedisCarriesPresenceUpdates(t *testing.T) {
+	pub, sub := newRedis(t), newRedis(t)
+	var got inbox
+	if _, err := sub.Subscribe("doc", got.add); err != nil {
+		t.Fatal(err)
+	}
+	update := []byte(`{"type":"peer","peer":{"replica":"ann","name":"Ann","color":"#2f6fde"}}`)
+	if err := pub.Publish(t.Context(), Message{DocID: "doc", Author: "ann", Presence: update}); err != nil {
+		t.Fatal(err)
+	}
+	msgs := got.wait(t, 1)
+	if len(msgs) != 1 || string(msgs[0].Presence) != string(update) || len(msgs[0].Ops) != 0 || msgs[0].Author != "ann" {
+		t.Fatalf("got %+v", msgs)
+	}
+}

@@ -1,20 +1,27 @@
 package pubsub
 
 import (
+	"encoding/json"
 	"sync"
 
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/wire"
 )
 
-// Message is one batch of committed operations for a document, in sequence
-// order.
+// Message is one live event for a document: a batch of committed
+// operations, in sequence order, or a presence update.
 type Message struct {
 	DocID string `json:"doc"`
-	// Author is the replica that made the ops. Gateways do not send a
-	// message back to its author's connections, which already have the ops
-	// (and their seqs, from the ack).
+	// Author is the replica that made the ops, or whose presence changed.
+	// Gateways do not send a message back to its author's connections,
+	// which already have the ops (and their seqs, from the ack) and know
+	// where their own cursor is.
 	Author string  `json:"author"`
-	Ops    []SeqOp `json:"ops"`
+	Ops    []SeqOp `json:"ops,omitempty"`
+	// Presence, if set, is a presence update (someone joined, moved their
+	// cursor, or left), already encoded as the message gateways send to
+	// browsers. Gateways publish these themselves; this package only
+	// carries them.
+	Presence json.RawMessage `json:"presence,omitempty"`
 }
 
 // SeqOp is an operation with its sequence number.
