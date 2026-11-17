@@ -24,6 +24,35 @@ describe("parseServerMessage", () => {
     });
   });
 
+  it("parses presence messages", () => {
+    const ann = { replica: "a", name: "Ann", color: "#2f6fde" };
+    const cursor = { anchor: { counter: 2, replica: "b" }, head: null };
+    expect(parseServerMessage(json({ type: "peers", peers: [ann, { ...ann, replica: "c", cursor }] }))).toEqual({
+      type: "peers",
+      peers: [ann, { ...ann, replica: "c", cursor }],
+    });
+    // Nobody else there: the server leaves the list out.
+    expect(parseServerMessage(json({ type: "peers" }))).toEqual({ type: "peers", peers: [] });
+    expect(parseServerMessage(json({ type: "peer", peer: { ...ann, cursor } }))).toEqual({
+      type: "peer",
+      peer: { ...ann, cursor },
+    });
+    expect(parseServerMessage(json({ type: "left", replica: "a" }))).toEqual({ type: "left", replica: "a" });
+  });
+
+  it("rejects malformed presence", () => {
+    const ann = { replica: "a", name: "Ann", color: "#2f6fde" };
+    const bad = [
+      { type: "peer", peer: { ...ann, color: "red;background:url(x)" } }, // only hex colours
+      { type: "peer", peer: { ...ann, replica: "" } },
+      { type: "peer", peer: { ...ann, cursor: { anchor: { counter: 0, replica: "b" }, head: null } } },
+      { type: "peer", peer: { ...ann, cursor: "start" } },
+      { type: "peers", peers: [ann, { name: "no replica" }] },
+      { type: "left" },
+    ];
+    for (const msg of bad) expect(parseServerMessage(json(msg)), JSON.stringify(msg)).toBeNull();
+  });
+
   it("treats an omitted joined seq as zero", () => {
     expect(parseServerMessage(json({ type: "joined", doc: "d" }))).toMatchObject({ seq: 0, you: null });
   });

@@ -198,3 +198,92 @@ describe("websocketTransport", () => {
     expect(current().sentOfType("ops")).toHaveLength(0);
   });
 });
+
+describe("websocketTransport presence", () => {
+  const ann = { replica: "ann", name: "Ann", color: "#2f6fde" };
+  const bob = { replica: "bob", name: "Bob", color: "#d6336c" };
+  const caret = (counter: number) => ({ anchor: { counter, replica: "x" }, head: { counter, replica: "x" } });
+
+  function setupPresence() {
+    const sockets: FakeSocket[] = [];
+    const lists: string[][] = [];
+    const transport = websocketTransport({
+      url: "ws://test/ws",
+      docId: "doc",
+      replica: "me",
+      createSocket: () => {
+        const s = new FakeSocket();
+        sockets.push(s);
+        return s;
+      },
+      backoff: { initialMs: 100, maxMs: 1000 },
+      onPeers: (peers) => lists.push(peers.map((p) => p.name)),
+      peerTimeoutMs: 3000,
+    });
+    const current = () => sockets.at(-1)!;
+    const join = () => {
+      current().open();
+      current().receive({ type: "joined", doc: "doc", you: { replica: "me", name: "Me", color: "#000000" } });
+    };
+    return { transport, current, join, lists };
+  }
+
+  it("keeps the list of other editors, sorted by name", () => {
+    const { current, join, lists } = setupPresence();
+    join();
+    current().receive({ type: "peers", peers: [bob, { replica: "me", name: "Me", color: "#000000" }] });
+    current().receive({ type: "peer", peer: ann });
+    current().receive({ type: "peer", peer: { ...ann, cursor: caret(3) } }); // moved: same people
+    current().receive({ type: "left", replica: "bob" });
+    expect(lists).toEqual([["Bob"], ["Ann", "Bob"], ["Ann", "Bob"], ["Ann"]]);
+  });
+
+  it("forgets an editor not heard from in time, but not one that keeps beating", () => {
+    const { current, join, lists } = setupPresence();
+    join();
+    current().receive({ type: "peers", peers: [ann, bob] });
+    vi.advanceTimersByTime(2000);
+    current().receive({ type: "peer", peer: ann }); // heartbeat; bob's gateway went quiet
+    vi.advanceTimersByTime(2000);
+    expect(lists.at(-1)).toEqual(["Ann"]);
+    vi.advanceTimersByTime(3000);
+    expect(lists.at(-1)).toEqual([]);
+  });
+
+  it("clears the list while offline", () => {
+    const { current, join, lists } = setupPresence();
+    join();
+    current().receive({ type: "peers", peers: [ann] });
+    current().drop();
+    expect(lists.at(-1)).toEqual([]);
+  });
+
+  it("sends cursor moves throttled, and only the latest", () => {
+    const { transport, current, join } = setupPresence();
+    join();
+    transport.setCursor(caret(1));
+    transport.setCursor(caret(2));
+    transport.setCursor(caret(3));
+    expect(current().sentOfType("cursor")).toHaveLength(0);
+    vi.advanceTimersByTime(50);
+    expect(current().sentOfType("cursor")).toEqual([{ type: "cursor", cursor: caret(3) }]);
+
+    transport.setCursor(caret(3)); // unchanged: nothing to say
+    vi.advanceTimersByTime(50);
+    expect(current().sentOfType("cursor")).toHaveLength(1);
+  });
+
+  it("sends the cursor again after reconnecting, and not before joining", () => {
+    const { transport, current, join } = setupPresence();
+    transport.setCursor(caret(5)); // before the first join
+    vi.advanceTimersByTime(50);
+    expect(current().sentOfType("cursor")).toHaveLength(0);
+    join();
+    expect(current().sentOfType("cursor")).toEqual([{ type: "cursor", cursor: caret(5) }]);
+
+    current().drop();
+    vi.advanceTimersByTime(1000); // reconnect backoff
+    join();
+    expect(current().sentOfType("cursor")).toEqual([{ type: "cursor", cursor: caret(5) }]);
+  });
+});
