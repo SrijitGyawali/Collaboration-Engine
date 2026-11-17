@@ -12,6 +12,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/SrijitGyawali/Collaboration-Engine/internal/presence"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/pubsub"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/store"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/syncsvc"
@@ -74,6 +75,15 @@ type Config struct {
 	// does not answer within 10 seconds (or within the interval, if shorter)
 	// is disconnected. 0 means 30 s.
 	PingInterval time.Duration
+	// Presence stores who has each document open. Gateways serving the
+	// same documents must share one (presence.Redis); nil means one in
+	// this process, which is right only for a single gateway.
+	Presence presence.Store
+	// HeartbeatInterval is how often each editor's presence is stored and
+	// announced again. An entry not refreshed for three intervals expires,
+	// and browsers forget a peer they have not heard from for as long.
+	// 0 means 10 s.
+	HeartbeatInterval time.Duration
 }
 
 // Server accepts WebSocket connections and keeps each document's clients in
@@ -108,6 +118,12 @@ type subscription struct {
 
 // NewServer returns a Server.
 func NewServer(cfg Config) *Server {
+	if cfg.Presence == nil {
+		cfg.Presence = presence.NewMemory()
+	}
+	if cfg.HeartbeatInterval <= 0 {
+		cfg.HeartbeatInterval = defaultHeartbeat
+	}
 	base, stop := context.WithCancel(context.Background())
 	return &Server{
 		cfg:   cfg,
@@ -239,12 +255,27 @@ func (s *Server) serve(ctx context.Context, conn *websocket.Conn) {
 	if c.push(ctx, encode(serverMessage{Type: typeJoined, Doc: doc, Seq: last, You: &you})) != nil {
 		return
 	}
+	m, err := s.enter(ctx, doc, c, you)
+	defer s.leave(m)
+	if err != nil {
+		return
+	}
 
 	for {
 		msg, err := read(ctx, conn)
 		if err != nil {
 			closeForReadError(conn, err, "")
 			return
+		}
+		if msg.Type == typeCursor {
+			// A malformed cursor is dropped, not fatal: presence is
+			// decoration, and the edits matter more.
+			if msg.Cursor == nil || msg.Cursor.Valid() != nil {
+				s.cfg.Log.Debug("gateway: ignoring a malformed cursor", "doc", doc)
+				continue
+			}
+			s.moveCursor(ctx, m, msg.Cursor)
+			continue
 		}
 		if msg.Type != typeOps {
 			closeWith(conn, websocket.StatusPolicyViolation, "unexpected message type "+msg.Type)
@@ -341,10 +372,18 @@ func (s *Server) unsubscribe(doc string) {
 	sub.stop()
 }
 
-// deliver forwards edits that arrived through pub/sub to the document's room
-// here, except to their author, who had them acknowledged instead.
+// deliver forwards what arrived through pub/sub to the document's room here,
+// except to its author: edits were acknowledged to their author instead,
+// and an editor knows its own presence.
 func (s *Server) deliver(doc string, m pubsub.Message) {
-	if m.DocID != doc || len(m.Ops) == 0 {
+	if m.DocID != doc {
+		return
+	}
+	if len(m.Presence) > 0 {
+		s.hub.broadcastExceptAuthor(doc, m.Author, m.Presence)
+		return
+	}
+	if len(m.Ops) == 0 {
 		return
 	}
 	ops := make([]seqOp, len(m.Ops))

@@ -100,6 +100,19 @@ func (h *hub) broadcastExceptAuthor(doc, author string, msg []byte) {
 	}
 }
 
+// hasOther reports whether the room has a connection of replica other than
+// c: a reconnected editor whose old connection is only now going away.
+func (h *hub) hasOther(doc, replica string, c *client) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for other := range h.rooms[doc] {
+		if other != c && other.replica == replica {
+			return true
+		}
+	}
+	return false
+}
+
 // size reports how many clients are in a room.
 func (h *hub) size(doc string) int {
 	h.mu.Lock()

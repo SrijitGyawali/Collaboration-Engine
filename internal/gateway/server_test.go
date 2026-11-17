@@ -67,6 +67,13 @@ func closeBody(resp *http.Response) {
 type testClient struct {
 	t    *testing.T
 	conn *websocket.Conn
+	// presence, if set, makes next and tryNext return presence messages
+	// (peers, peer, left) too; most tests are about edits and skip them.
+	presence bool
+}
+
+func isPresence(typ string) bool {
+	return typ == typePeers || typ == typePeer || typ == typeLeft
 }
 
 func dial(t *testing.T, url string) *testClient {
@@ -109,15 +116,20 @@ func (c *testClient) next() serverMessage {
 func (c *testClient) tryNext(wait time.Duration) (serverMessage, error) {
 	ctx, cancel := context.WithTimeout(c.t.Context(), wait)
 	defer cancel()
-	_, data, err := c.conn.Read(ctx)
-	if err != nil {
-		return serverMessage{}, err
+	for {
+		_, data, err := c.conn.Read(ctx)
+		if err != nil {
+			return serverMessage{}, err
+		}
+		var msg serverMessage
+		if err := json.Unmarshal(data, &msg); err != nil {
+			c.t.Fatalf("server sent invalid JSON %s: %v", data, err)
+		}
+		if !c.presence && isPresence(msg.Type) {
+			continue
+		}
+		return msg, nil
 	}
-	var msg serverMessage
-	if err := json.Unmarshal(data, &msg); err != nil {
-		c.t.Fatalf("server sent invalid JSON %s: %v", data, err)
-	}
-	return msg, nil
 }
 
 // join joins doc as replica and returns the history received and the joined
@@ -139,6 +151,9 @@ func (c *testClient) joinWith(msg map[string]any) ([]seqOp, int64) {
 			history = append(history, msg.Ops...)
 		case typeJoined:
 			return history, msg.Seq
+		case typePeer, typeLeft:
+			// Others' presence can arrive during catch-up; presence
+			// tests join one client at a time and read it afterwards.
 		default:
 			c.t.Fatalf("unexpected %q while joining", msg.Type)
 		}

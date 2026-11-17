@@ -9,6 +9,7 @@ import (
 
 	"github.com/coder/websocket"
 
+	"github.com/SrijitGyawali/Collaboration-Engine/internal/presence"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/pubsub"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/store/memstore"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/syncsvc"
@@ -19,19 +20,20 @@ import (
 // committed edits through one in-memory broker: the way gateway processes
 // share Redis, inside one test.
 type cluster struct {
-	broker *pubsub.Memory
-	svc    *syncsvc.Service
-	srvs   []*Server
-	urls   []string
+	broker   *pubsub.Memory
+	presence *presence.Memory // shared, as gateways share Redis
+	svc      *syncsvc.Service
+	srvs     []*Server
+	urls     []string
 }
 
 func startCluster(t *testing.T, gateways int) *cluster {
 	t.Helper()
-	c := &cluster{broker: pubsub.NewMemory()}
+	c := &cluster{broker: pubsub.NewMemory(), presence: presence.NewMemory()}
 	c.svc = syncsvc.New(memstore.New(), quietLog(), syncsvc.Options{Publisher: c.broker})
 	t.Cleanup(c.svc.Close) // registered first, so it runs after the gateways close
 	for range gateways {
-		srv, url := startGateway(t, Config{Backend: c.svc, Broker: c.broker})
+		srv, url := startGateway(t, Config{Backend: c.svc, Broker: c.broker, Presence: c.presence})
 		c.srvs = append(c.srvs, srv)
 		c.urls = append(c.urls, url)
 	}
