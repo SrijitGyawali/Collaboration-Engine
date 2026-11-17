@@ -21,6 +21,7 @@ One file per working day: what was planned, what got built, what was learned, an
 | 14 | Nov 14 | CI fixed, integration tests through every layer, keepalive pings | [2026-11-14](2026-11-14.md) |
 | 15 | Nov 15 | Redis Pub/Sub: the sync service publishes, gateways subscribe per document | [2026-11-15](2026-11-15.md) |
 | 16 | Nov 16 | Two gateways behind a Caddy proxy, cross-gateway tests in Go and the browser | [2026-11-16](2026-11-16.md) |
+| 17 | Nov 17 | Presence with a TTL and heartbeat, live cursors in the editor | [2026-11-17](2026-11-17.md) |
 
 ## Weekly goals
 
