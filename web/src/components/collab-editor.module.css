@@ -33,3 +33,71 @@
 .error {
   color: var(--error);
 }
+
+/* The textarea with other editors' carets drawn over it. */
+.surface {
+  position: relative;
+}
+
+.cursors {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  border-radius: var(--radius);
+}
+
+.caret {
+  position: absolute;
+  width: 2px;
+  border-radius: 1px;
+  transition:
+    top 80ms linear,
+    left 80ms linear;
+}
+
+.label {
+  position: absolute;
+  bottom: 100%;
+  left: -1px;
+  padding: 0 4px;
+  border-radius: 3px 3px 3px 0;
+  color: #fff;
+  font: 600 0.7rem/1.4 system-ui, sans-serif;
+  white-space: nowrap;
+}
+
+/* On the first line there is no room above. */
+.labelBelow {
+  top: 100%;
+  bottom: auto;
+  border-radius: 0 3px 3px 3px;
+}
+
+.peers {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  color: var(--text-muted);
+  font-size: 0.9rem;
+}
+
+.peer {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+}
+
+.dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .caret {
+    transition: none;
+  }
+}
