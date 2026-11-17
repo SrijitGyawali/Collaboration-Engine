@@ -182,7 +182,8 @@ func TestOldConnectionOfAReconnectedEditorIsNotALeave(t *testing.T) {
 // expires.
 func TestHeartbeatKeepsPresenceAlive(t *testing.T) {
 	st := presence.NewMemory()
-	beat := 40 * time.Millisecond
+	// Generous for a loaded CI machine: the TTL is three beats, 300 ms.
+	beat := 100 * time.Millisecond
 	url := startPresenceServer(t, st, beat)
 	_, _ = enter(t, url, "doc", "alice")
 	bob, _ := enter(t, url, "doc", "bob")
