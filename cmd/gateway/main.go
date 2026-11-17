@@ -7,8 +7,10 @@
 // so any number of them can run side by side. For that, set REDIS_ADDR here
 // and on the sync service: the gateway then subscribes to each open
 // document's channel and hears about every committed edit, whichever gateway
-// it was sent through. Without it, the gateway broadcasts only the edits it
-// carried itself, which is right for exactly one gateway.
+// it was sent through. Who has each document open (presence) is kept in
+// Redis as well, in entries the gateway refreshes on a heartbeat. Without
+// it, the gateway broadcasts only the edits it carried itself and keeps
+// presence in memory, which is right for exactly one gateway.
 package main
 
 import (
@@ -19,6 +21,7 @@ import (
 
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/gateway"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/platform"
+	"github.com/SrijitGyawali/Collaboration-Engine/internal/presence"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/pubsub"
 	"github.com/SrijitGyawali/Collaboration-Engine/internal/syncrpc"
 )
@@ -47,7 +50,17 @@ func main() {
 			// unsubscribes as its connections end.
 			defer func() { _ = r.Close() }()
 			cfg.Broker = r
-			log.Info("following documents through Redis", "addr", addr)
+
+			// Presence lives in Redis too, so every gateway lists the
+			// same editors. Closed after the WebSocket server, whose
+			// connections remove their entries as they end.
+			p, err := presence.NewRedis(ctx, addr)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = p.Close() }()
+			cfg.Presence = p
+			log.Info("following documents and presence through Redis", "addr", addr)
 		} else {
 			log.Warn("REDIS_ADDR is not set: only edits sent through this gateway are broadcast, so run no more than one")
 		}
