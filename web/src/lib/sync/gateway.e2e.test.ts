@@ -14,6 +14,7 @@ import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import type { CRDT } from "@/lib/crdt";
 import { loadTestCRDT } from "@/test/load-crdt";
 import { CollabSession, randomReplicaId } from "./session";
+import type { Peer } from "./server-protocol";
 import { websocketTransport, type ConnectionStatus, type SocketLike } from "./websocket-transport";
 
 const url = process.env.GATEWAY_URL;
@@ -36,6 +37,7 @@ function connect(doc: string, gateway = url!) {
   const replica = randomReplicaId();
   const statuses: ConnectionStatus[] = [];
   const sockets: SocketLike[] = [];
+  const presence = { peers: [] as Peer[] };
   const transport = websocketTransport({
     url: gateway,
     docId: doc,
@@ -47,10 +49,11 @@ function connect(doc: string, gateway = url!) {
       return s;
     },
     backoff: { initialMs: 50, maxMs: 200 },
+    onPeers: (p) => (presence.peers = p),
   });
   const session = new CollabSession(crdt, transport, replica);
   open.push(session);
-  return { session, statuses, sockets };
+  return { session, statuses, sockets, transport, replica, presence };
 }
 
 async function eventually(check: () => void, ms = 5000): Promise<void> {
@@ -140,5 +143,29 @@ describe.skipIf(gateways.length < 2)("across two gateways", () => {
       expect(texts[0]).toHaveLength(want);
       for (const t of texts) expect(t).toBe(texts[0]);
     }, 10_000);
+  });
+
+  it("shows who is here and where their caret is, across gateways", async () => {
+    const doc = `e2e-presence-${Date.now()}`;
+    const a = connect(doc, gateways[0]);
+    await eventually(() => expect(a.statuses.at(-1)).toBe("connected"));
+    a.session.applyLocal(insert(0, "hello"));
+    const b = connect(doc, gateways[1]);
+    await eventually(() => expect(b.session.text).toBe("hello"));
+
+    await eventually(() => expect(a.presence.peers.map((p) => p.replica)).toEqual([b.replica]));
+    await eventually(() => expect(b.presence.peers.map((p) => p.replica)).toEqual([a.replica]));
+
+    // a puts the caret after "hel"; b, on the other gateway, finds it there
+    // even after typing in front of it.
+    const after = a.session.cursorAnchor(3);
+    a.transport.setCursor({ anchor: after, head: after });
+    await eventually(() => expect(b.presence.peers[0]?.cursor).toBeDefined());
+    b.session.applyLocal(insert(0, ">> "));
+    expect(b.session.cursorPosition(b.presence.peers[0].cursor!.head)).toBe(6);
+
+    b.session.close();
+    open.splice(open.indexOf(b.session), 1);
+    await eventually(() => expect(a.presence.peers).toEqual([]));
   });
 });
