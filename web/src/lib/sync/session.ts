@@ -86,6 +86,32 @@ export class CollabSession {
     this.#transport.send({ type: "ops", from: this.replica, ops });
   }
 
+  /**
+   * The anchor for a caret at pos (in characters): the ID of the character
+   * just before it, or null at the start. Sent to others instead of pos,
+   * because the ID stays on the same spot while anyone edits.
+   */
+  cursorAnchor(pos: number): WireID | null {
+    const at = Math.min(pos, this.#doc.length);
+    return at <= 0 ? null : this.#doc.idAt(at - 1);
+  }
+
+  /**
+   * Where a caret anchored after a character is now, in characters. If that
+   * character was deleted, the caret sits where it was. null when the
+   * character has not reached this replica yet: the cursor is then not
+   * shown until it has.
+   */
+  cursorPosition(after: WireID | null): number | null {
+    if (after === null) return 0;
+    try {
+      const { pos, visible } = this.#doc.positionOf(after);
+      return visible ? pos + 1 : pos;
+    } catch {
+      return null;
+    }
+  }
+
   /** Calls listener after every batch of remote ops that changed anything. */
   onRemoteUpdate(listener: (update: RemoteUpdate) => void): () => void {
     this.#listeners.add(listener);

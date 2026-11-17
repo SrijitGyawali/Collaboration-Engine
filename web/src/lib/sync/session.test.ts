@@ -198,3 +198,33 @@ describe("CollabSession", () => {
     expect(() => a.applyLocal(insert(0, "x"))).toThrow(/closed/);
   });
 });
+
+describe("cursor anchors", () => {
+  it("turn a caret position into a character ID and back", () => {
+    const { a } = pair();
+    a.applyLocal({ pos: 0, deleteCount: 0, insert: "héllo" });
+    expect(a.cursorAnchor(0)).toBeNull();
+    expect(a.cursorPosition(null)).toBe(0);
+    for (const pos of [1, 3, 5]) {
+      expect(a.cursorPosition(a.cursorAnchor(pos))).toBe(pos);
+    }
+    expect(a.cursorPosition(a.cursorAnchor(99))).toBe(5); // clamped to the end
+  });
+
+  it("keep a remote cursor on its spot while others edit", () => {
+    const { a, b } = pair();
+    a.applyLocal({ pos: 0, deleteCount: 0, insert: "world" });
+    const anchor = a.cursorAnchor(3); // after "wor"
+    b.applyLocal({ pos: 0, deleteCount: 0, insert: "hello " }); // before it, on the other replica
+    expect(a.cursorPosition(anchor)).toBe(9);
+    expect(b.cursorPosition(anchor)).toBe(9);
+
+    b.applyLocal({ pos: 8, deleteCount: 1, insert: "" }); // delete the "r" it sits after
+    expect(a.cursorPosition(anchor)).toBe(8);
+  });
+
+  it("hide a cursor whose character has not arrived", () => {
+    const { a } = pair();
+    expect(a.cursorPosition({ counter: 7, replica: "someone-else" })).toBeNull();
+  });
+});
