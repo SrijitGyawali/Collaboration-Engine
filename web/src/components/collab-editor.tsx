@@ -127,7 +127,7 @@ export function CollabEditor({ docId }: { docId: string }) {
             "Nobody else is here yet."
           ) : (
             <>
-              Also here:{" "}
+              Also here ({peers.length}):{" "}
               {peers.map((p) => (
                 <span key={p.replica} className={styles.peer}>
                   <span className={styles.dot} style={{ background: p.color }} />
